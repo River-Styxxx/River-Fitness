@@ -77,8 +77,7 @@ export default function Today() {
 
   return (
     <Screen>
-      {/* kcal has no direction yet — shown uncoloured until the rule is decided */}
-      <MacroMeter label="calories" value={kcalNow} target={kcalTarget} unit="kcal" />
+      <MacroMeter label="calories" value={kcalNow} target={kcalTarget} unit="kcal" direction="ceiling" />
       <MacroMeter label="protein" value={pNow} target={pTarget} unit="g" direction="floor" />
       <MacroMeter label="carbs" value={cNow} target={cTarget} unit="g" direction="ceiling" />
       <MacroMeter label="fat" value={fNow} target={fTarget} unit="g" direction="ceiling" />
