@@ -9,7 +9,7 @@ import {
   ActivityIndicator,
   useWindowDimensions,
 } from 'react-native';
-import { surface, text, space, font, radius, layout, Domain, domainColor } from '../theme';
+import { surface, text, space, font, radius, layout, signal, Domain, domainColor } from '../theme';
 
 /**
  * Every route renders through Screen. The app is phone-shaped at any viewport:
@@ -93,6 +93,65 @@ export function StatTile({ label, value, unit, domain }: { label: string; value:
   );
 }
 
+
+// ---------- macro meters ----------
+/**
+ * Two kinds of target, two colour rules. Signal colours only — never domain
+ * accents, which stay reserved for identity (spec: domain colour never state).
+ *
+ * floor   (protein): under target is the miss. red -> yellow at 90% -> green at goal.
+ * ceiling (carbs, fat): over target is the miss. green -> yellow at 90% -> red past goal.
+ */
+export type MeterDirection = 'floor' | 'ceiling';
+
+export function meterColor(value: number, target: number, direction: MeterDirection): string {
+  if (!target) return text.muted;
+  const pct = value / target;
+  if (direction === 'floor') {
+    if (pct >= 1) return signal.success;
+    if (pct >= 0.9) return signal.attention;
+    return signal.error;
+  }
+  if (pct > 1) return signal.error;
+  if (pct >= 0.9) return signal.attention;
+  return signal.success;
+}
+
+export function MacroMeter({
+  label,
+  value,
+  target,
+  unit,
+  direction,
+}: {
+  label: string;
+  value: number;
+  target: number | null;
+  unit?: string;
+  direction?: MeterDirection;
+}) {
+  const v = Math.round(value);
+  const t = target != null ? Math.round(target) : null;
+  const colored = t != null && direction != null;
+  const color = colored ? meterColor(v, t, direction) : text.muted;
+  const fill = t ? Math.min(v / t, 1) : 0;
+
+  return (
+    <View style={styles.meter}>
+      <View style={styles.meterHead}>
+        <Text style={styles.meterLabel}>{label}</Text>
+        <Text style={styles.meterValue}>
+          <Text style={{ color }}>{v}</Text>
+          <Text style={styles.meterTarget}>{t != null ? `/${t}` : ''}{unit ? ` ${unit}` : ''}</Text>
+        </Text>
+      </View>
+      <View style={styles.track}>
+        <View style={[styles.fill, { width: `${fill * 100}%`, backgroundColor: color }]} />
+      </View>
+    </View>
+  );
+}
+
 export function Row({ children, style }: { children: React.ReactNode; style?: ViewStyle }) {
   return <View style={[{ flexDirection: 'row', gap: space.m }, style]}>{children}</View>;
 }
@@ -144,6 +203,13 @@ const styles = StyleSheet.create({
   statValue: { color: text.primary, fontSize: font.heading, fontWeight: '700' },
   statUnit: { color: text.muted, fontSize: font.small, fontWeight: '400' },
   statLabel: { color: text.muted, fontSize: font.small, marginTop: space.xs },
+  meter: { backgroundColor: surface.card, borderRadius: radius.m, padding: space.l, marginBottom: space.m },
+  meterHead: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: space.m },
+  meterLabel: { color: text.muted, fontSize: font.small },
+  meterValue: { fontSize: font.title, fontWeight: '700', fontVariant: ['tabular-nums'] },
+  meterTarget: { color: text.muted, fontSize: font.small, fontWeight: '400' },
+  track: { height: space.s, borderRadius: radius.pill, backgroundColor: surface.line, overflow: 'hidden' },
+  fill: { height: '100%', borderRadius: radius.pill },
   button: {
     backgroundColor: domainColor.coaching,
     borderRadius: radius.m,

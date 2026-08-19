@@ -10,7 +10,7 @@ import {
   FoodLogEntry,
   NutritionTarget,
 } from '../../src/data';
-import { Screen, Card, H2, Body, Small, StatTile, Row, Button, Loading } from '../../src/components/ui';
+import { Screen, Card, H2, Body, Small, StatTile, MacroMeter, Row, Button, Loading } from '../../src/components/ui';
 import { surface, text, space, font, radius, signal, domainColor } from '../../src/theme';
 
 function todayLocal(tz: string): string {
@@ -68,18 +68,21 @@ export default function Today() {
 
   const kcalNow = Number(today?.kcal ?? 0);
   const pNow = Number(today?.protein_g ?? 0);
+  const cNow = Number(today?.carbs_g ?? 0);
+  const fNow = Number(today?.fat_g ?? 0);
   const kcalTarget = target?.kcal ? Number(target.kcal) : null;
   const pTarget = target?.protein_g ? Number(target.protein_g) : null;
+  const cTarget = target?.carbs_g ? Number(target.carbs_g) : null;
+  const fTarget = target?.fat_g ? Number(target.fat_g) : null;
 
   return (
     <Screen>
-      <Row>
-        <StatTile label={kcalTarget ? `of ${kcalTarget} kcal` : 'kcal'} value={Math.round(kcalNow)} domain="nutrition" />
-        <StatTile label={pTarget ? `of ${pTarget} g protein` : 'protein g'} value={Math.round(pNow)} domain="nutrition" />
-      </Row>
-      <Row style={{ marginTop: space.m }}>
-        <StatTile label="carbs g" value={Math.round(Number(today?.carbs_g ?? 0))} />
-        <StatTile label="fat g" value={Math.round(Number(today?.fat_g ?? 0))} />
+      {/* kcal has no direction yet — shown uncoloured until the rule is decided */}
+      <MacroMeter label="calories" value={kcalNow} target={kcalTarget} unit="kcal" />
+      <MacroMeter label="protein" value={pNow} target={pTarget} unit="g" direction="floor" />
+      <MacroMeter label="carbs" value={cNow} target={cTarget} unit="g" direction="ceiling" />
+      <MacroMeter label="fat" value={fNow} target={fTarget} unit="g" direction="ceiling" />
+      <Row style={{ marginTop: space.s }}>
         <StatTile label="P g/100kcal" value={today?.protein_g_per_100kcal ?? '—'} domain="coaching" />
       </Row>
 

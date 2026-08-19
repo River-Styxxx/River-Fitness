@@ -42,7 +42,10 @@ export default function RootLayout() {
           headerTitleStyle: { fontWeight: '700' },
           contentStyle: { backgroundColor: surface.bg },
         }}
-      />
+      >
+        {/* the client group owns its own header (date + clock) — don't stack a second one on top */}
+        <Stack.Screen name="client" options={{ headerShown: false }} />
+      </Stack>
     </SessionCtx.Provider>
   );
 }
