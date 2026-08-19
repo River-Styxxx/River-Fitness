@@ -98,3 +98,14 @@ export const radius = { s: 8, m: 13, l: 21, pill: 999 } as const;
 
 // golden angle — phyllotaxis + hue stepping
 export const GOLDEN_ANGLE = 137.50776405003785;
+
+// ---------- layout shell ----------
+// Fibonacci widths. The app reads at phone width on every viewport; wide
+// screens get side rails (left = menu, right = notes/tips) instead of stretching.
+export const layout = {
+  content: 377, // Fib — the reading column
+  rail: 233, // Fib — one side rail
+  gutter: space.xl, // 21
+  compactUpTo: 610, // Fib — at or below this the column runs full bleed (phones)
+  railsFrom: 987, // Fib — viewport width at which rails are allowed to appear
+} as const;

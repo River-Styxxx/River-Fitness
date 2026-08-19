@@ -1,12 +1,55 @@
 import React from 'react';
-import { View, Text, StyleSheet, Pressable, ViewStyle, ScrollView, ActivityIndicator } from 'react-native';
-import { surface, text, space, font, radius, Domain, domainColor } from '../theme';
+import {
+  View,
+  Text,
+  StyleSheet,
+  Pressable,
+  ViewStyle,
+  ScrollView,
+  ActivityIndicator,
+  useWindowDimensions,
+} from 'react-native';
+import { surface, text, space, font, radius, layout, Domain, domainColor } from '../theme';
 
-export function Screen({ children, scroll = true }: { children: React.ReactNode; scroll?: boolean }) {
-  if (!scroll) return <View style={styles.screen}>{children}</View>;
+/**
+ * Every route renders through Screen. The app is phone-shaped at any viewport:
+ * content is capped at `layout.content` and centred. Wide viewports get side
+ * rails (left = menu, right = notes/tips) rather than a stretched column —
+ * pass `left` / `right` to fill them; they render nothing until then.
+ */
+export function Screen({
+  children,
+  scroll = true,
+  left,
+  right,
+}: {
+  children: React.ReactNode;
+  scroll?: boolean;
+  left?: React.ReactNode;
+  right?: React.ReactNode;
+}) {
+  const { width } = useWindowDimensions();
+  // phones and small tablets: full bleed. anything wider: the phone-width column.
+  const compact = width <= layout.compactUpTo;
+  const rails = width >= layout.railsFrom;
+  const shellMax = compact
+    ? undefined
+    : rails
+      ? layout.content + 2 * (layout.rail + layout.gutter)
+      : layout.content;
+
+  const body = (
+    <View style={[styles.shell, shellMax ? { maxWidth: shellMax } : null]}>
+      {rails ? <View style={styles.rail}>{left}</View> : null}
+      <View style={[styles.column, compact ? styles.columnFull : styles.columnFramed]}>{children}</View>
+      {rails ? <View style={styles.rail}>{right}</View> : null}
+    </View>
+  );
+
+  if (!scroll) return <View style={[styles.screen, styles.centred]}>{body}</View>;
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={{ padding: space.l, paddingBottom: space.xxl }}>
-      {children}
+    <ScrollView style={styles.screen} contentContainerStyle={styles.scrollContent}>
+      {body}
     </ScrollView>
   );
 }
@@ -76,6 +119,17 @@ export function Loading() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: surface.bg },
+  centred: { alignItems: 'center' },
+  scrollContent: { alignItems: 'center', minHeight: '100%' },
+  shell: { width: '100%', flexDirection: 'row', gap: layout.gutter, alignSelf: 'center', flexGrow: 1 },
+  rail: { width: layout.rail },
+  column: { flex: 1, maxWidth: layout.content, padding: space.l, paddingBottom: space.xxl },
+  columnFull: { maxWidth: undefined, width: '100%' },
+  columnFramed: {
+    borderLeftWidth: StyleSheet.hairlineWidth,
+    borderRightWidth: StyleSheet.hairlineWidth,
+    borderColor: surface.line,
+  },
   card: {
     backgroundColor: surface.card,
     borderRadius: radius.m,

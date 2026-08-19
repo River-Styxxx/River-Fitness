@@ -1,7 +1,7 @@
 import React from 'react';
 import { Tabs } from 'expo-router';
-import { Text } from 'react-native';
-import { surface, text, domainColor } from '../../src/theme';
+import { StyleSheet, Text } from 'react-native';
+import { surface, text, domainColor, layout } from '../../src/theme';
 
 import type { ColorValue } from 'react-native';
 
@@ -15,7 +15,18 @@ export default function ClientTabs() {
       screenOptions={{
         headerStyle: { backgroundColor: surface.raised },
         headerTintColor: text.primary,
-        tabBarStyle: { backgroundColor: surface.raised, borderTopColor: surface.line },
+        // keep the tab bar on the phone-width column instead of spanning the viewport
+        tabBarStyle: {
+          backgroundColor: surface.raised,
+          borderTopColor: surface.line,
+          width: '100%',
+          maxWidth: layout.content,
+          alignSelf: 'center',
+          borderLeftWidth: StyleSheet.hairlineWidth,
+          borderRightWidth: StyleSheet.hairlineWidth,
+          borderLeftColor: surface.line,
+          borderRightColor: surface.line,
+        },
         tabBarActiveTintColor: domainColor.nutrition,
         tabBarInactiveTintColor: text.muted,
       }}
