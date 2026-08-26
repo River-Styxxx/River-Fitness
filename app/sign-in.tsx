@@ -58,7 +58,7 @@ export default function SignIn() {
 const styles = StyleSheet.create({
   wrap: { flex: 1, justifyContent: 'center', padding: space.xl, gap: space.l, maxWidth: 420, width: '100%', alignSelf: 'center' },
   input: {
-    backgroundColor: surface.card,
+    backgroundColor: surface.field,
     color: text.primary,
     borderRadius: radius.m,
     padding: space.l,

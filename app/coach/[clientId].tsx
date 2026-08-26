@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useLocalSearchParams, Stack } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import {
   getClient,
   getWeekSummaries,
@@ -10,7 +10,7 @@ import {
   DailySummary,
   NutritionTarget,
 } from '../../src/data';
-import { Screen, Card, H2, Body, Small, Row, StatTile, Loading } from '../../src/components/ui';
+import { Screen, Card, H1, H2, Body, Small, Row, StatTile, Loading } from '../../src/components/ui';
 import { space, signal } from '../../src/theme';
 import { Text } from 'react-native';
 
@@ -35,7 +35,7 @@ export default function ClientDetail() {
 
   return (
     <Screen>
-      <Stack.Screen options={{ title: client.display_name }} />
+      <H1>{client.display_name}</H1>
 
       <H2 domain="nutrition">Last 14 days</H2>
       {days.map((d) => {

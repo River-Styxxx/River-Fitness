@@ -28,7 +28,11 @@ export async function getSessionUserId(): Promise<string | null> {
 
 export type Role = 'coach' | 'client' | 'none';
 
-export async function resolveRole(): Promise<{ role: Role; client: Client | null; tenantId: string | null }> {
+export async function resolveRole(): Promise<{
+  role: Role;
+  client: Client | null;
+  tenantId: string | null;
+}> {
   const uid = await getSessionUserId();
   if (!uid) return { role: 'none', client: null, tenantId: null };
   const roles = await supabase
@@ -36,10 +40,11 @@ export async function resolveRole(): Promise<{ role: Role; client: Client | null
     .select('*')
     .eq('user_id', uid)
     .is('ended_at', null);
-  const coachRow = (roles.data ?? []).find((r) => r.role === 'coach' || r.role === 'admin');
-  if (coachRow) return { role: 'coach', client: null, tenantId: coachRow.tenant_id };
+  // a coach is a client of their own practice — always resolve their own row too
   const me = await supabase.from('clients').select('*').eq('claimed_user_id', uid).is('deleted_at', null).limit(1);
   const client = me.data?.[0] ?? null;
+  const coachRow = (roles.data ?? []).find((r) => r.role === 'coach' || r.role === 'admin');
+  if (coachRow) return { role: 'coach', client, tenantId: coachRow.tenant_id };
   return client
     ? { role: 'client', client, tenantId: client.tenant_id }
     : { role: 'none', client: null, tenantId: null };
@@ -126,9 +131,7 @@ export function newId(): string {
   });
 }
 
-export async function addFoodLogEntry(input: {
-  clientId: string;
-  tenantId: string;
+export type MealItemInput = {
   description: string;
   qty?: string;
   kcal?: number;
@@ -136,23 +139,60 @@ export async function addFoodLogEntry(input: {
   carbs_g?: number;
   fat_g?: number;
   foodItemId?: string;
-}): Promise<void> {
-  const row: TablesInsert<'food_log_entries'> = {
-    id: newId(),
-    tenant_id: input.tenantId,
-    client_id: input.clientId,
-    description: input.description,
-    qty: input.qty ?? null,
-    kcal: input.kcal ?? null,
-    protein_g: input.protein_g ?? null,
-    carbs_g: input.carbs_g ?? null,
-    fat_g: input.fat_g ?? null,
-    food_item_id: input.foodItemId ?? null,
-    status: input.kcal != null ? 'estimated' : 'pending',
-    source: 'app',
-  };
-  const { error } = await supabase.from('food_log_entries').upsert(row, { onConflict: 'id' });
+};
+
+/**
+ * Logs a meal as one row per food, sharing a client-generated meal_id.
+ *
+ * Macros can arrive two ways. Per item, they ride on that item's row. Entered
+ * once for the whole meal, they land on the first row and the rest stay null —
+ * either way the daily and weekly views sum to the same number, because they
+ * sum rows.
+ *
+ * A row with no macros is `pending`: the log is never blocked on numbers.
+ * Returns the meal_id so attachments can be hung off it.
+ */
+export async function logMeal(input: {
+  clientId: string;
+  tenantId: string;
+  items: MealItemInput[];
+  mealMacros?: { kcal?: number; protein_g?: number; carbs_g?: number; fat_g?: number };
+}): Promise<string> {
+  const items = input.items.filter((i) => i.description.trim().length > 0);
+  if (items.length === 0) throw new Error('nothing to log');
+
+  const mealId = newId();
+  const anyPerItem = items.some(
+    (i) => i.kcal != null || i.protein_g != null || i.carbs_g != null || i.fat_g != null
+  );
+
+  const rows: TablesInsert<'food_log_entries'>[] = items.map((item, idx) => {
+    // meal-level numbers only apply when no per-item breakdown was given
+    const macros =
+      !anyPerItem && idx === 0 && input.mealMacros
+        ? input.mealMacros
+        : { kcal: item.kcal, protein_g: item.protein_g, carbs_g: item.carbs_g, fat_g: item.fat_g };
+
+    return {
+      id: newId(),
+      meal_id: mealId,
+      tenant_id: input.tenantId,
+      client_id: input.clientId,
+      description: item.description.trim(),
+      qty: item.qty?.trim() || null,
+      kcal: macros.kcal ?? null,
+      protein_g: macros.protein_g ?? null,
+      carbs_g: macros.carbs_g ?? null,
+      fat_g: macros.fat_g ?? null,
+      food_item_id: item.foodItemId ?? null,
+      status: macros.kcal != null ? 'estimated' : 'pending',
+      source: 'app',
+    };
+  });
+
+  const { error } = await supabase.from('food_log_entries').upsert(rows, { onConflict: 'id' });
   if (error) throw new Error(error.message);
+  return mealId;
 }
 
 export async function searchFoodItems(q: string, limit = 20): Promise<FoodItem[]> {
@@ -168,7 +208,11 @@ export async function searchFoodItems(q: string, limit = 20): Promise<FoodItem[]
 
 // ---------- coach-side data ----------
 export async function listClients(): Promise<Client[]> {
-  const r = await supabase.from('clients').select('*').is('deleted_at', null).order('display_name');
+  const uid = await getSessionUserId();
+  let q = supabase.from('clients').select('*').is('deleted_at', null);
+  // the coach's own client row belongs under "My log", not in their caseload
+  if (uid) q = q.or(`claimed_user_id.is.null,claimed_user_id.neq.${uid}`);
+  const r = await q.order('display_name');
   return throwIf(r.data, r.error);
 }
 
@@ -184,4 +228,74 @@ export async function getLatestDailyAcrossClients(): Promise<DailySummary[]> {
     .order('local_date', { ascending: false })
     .limit(400);
   return throwIf(r.data, r.error);
+}
+
+// ---------- meal photos ----------
+
+export type MealPhotoUpload = { kind: 'top' | 'angle' | 'label'; blob: Blob };
+
+/**
+ * Uploads a meal's photos and records them as attachments.
+ *
+ * Path is `{client_id}/{meal_id}/{kind}.jpg` — the storage policies read the
+ * client id straight out of the first folder segment, so a client can only
+ * write under their own id and a coach can only read within their tenant.
+ *
+ * Photos never block the log: the meal rows are committed before this runs, so
+ * a dead connection costs a photo, not someone's dinner.
+ */
+export async function uploadMealPhotos(input: {
+  clientId: string;
+  tenantId: string;
+  mealId: string;
+  photos: MealPhotoUpload[];
+}): Promise<{ uploaded: number; failed: string[] }> {
+  const failed: string[] = [];
+  let uploaded = 0;
+
+  for (const photo of input.photos) {
+    const path = `${input.clientId}/${input.mealId}/${photo.kind}.jpg`;
+    const { error: upErr } = await supabase.storage
+      .from('meal-photos')
+      .upload(path, photo.blob, { contentType: 'image/jpeg', upsert: true });
+
+    if (upErr) {
+      failed.push(`${photo.kind}: ${upErr.message}`);
+      continue;
+    }
+
+    const row: TablesInsert<'attachments'> = {
+      tenant_id: input.tenantId,
+      entity_type: 'meal',
+      entity_id: input.mealId,
+      storage_path: path,
+      kind: photo.kind === 'label' ? 'nutrition_label' : `meal_${photo.kind}`,
+    };
+    const { error: rowErr } = await supabase.from('attachments').insert(row);
+    if (rowErr) failed.push(`${photo.kind} record: ${rowErr.message}`);
+    else uploaded++;
+  }
+
+  return { uploaded, failed };
+}
+
+/** Attachments for a set of meals. */
+export async function getMealAttachments(mealIds: string[]): Promise<Tables<'attachments'>[]> {
+  if (mealIds.length === 0) return [];
+  const r = await supabase
+    .from('attachments')
+    .select('*')
+    .eq('entity_type', 'meal')
+    .in('entity_id', mealIds)
+    .is('deleted_at', null);
+  return throwIf(r.data, r.error);
+}
+
+/** Private bucket: every view is a short-lived signed URL, never a public path. */
+export async function signedPhotoUrl(storagePath: string, seconds = 3600): Promise<string | null> {
+  const { data, error } = await supabase.storage
+    .from('meal-photos')
+    .createSignedUrl(storagePath, seconds);
+  if (error) return null;
+  return data?.signedUrl ?? null;
 }

@@ -45,6 +45,7 @@ export default function RootLayout() {
       >
         {/* the client group owns its own header (date + clock) — don't stack a second one on top */}
         <Stack.Screen name="client" options={{ headerShown: false }} />
+        <Stack.Screen name="coach" options={{ headerShown: false }} />
       </Stack>
     </SessionCtx.Provider>
   );

@@ -31,6 +31,29 @@ const palette = {
   signalGreen: '#3ddc84',
   signalRed: '#ff5d5d',
   signalYellow: '#f5c518', // triage / attention (amber; distinct from ember)
+  // pale blue surface family (light theme)
+  sky50: '#e3eefb',
+  sky100: '#d2e3f7',
+  sky200: '#bcd5ef',
+  // deep blue — chrome, then progressively darker for input fills
+  deep700: '#1b3a5c',
+  deep800: '#14304d',
+  deep900: '#0b2038',
+  deep950: '#071829',
+  // near-black — the edge that separates dark blue panels from the pale page
+  coal: '#0a0d12',
+  // scarlet — the header date and clock. Not a signal colour: signal.error
+  // stays reserved for things that went wrong.
+  scarlet: '#3d0508',
+  // blood orange — the active nav item
+  bloodOrange: '#e86035',
+
+  // yellows — text
+  gold400: '#f5c518',
+  gold300: '#ffd95e',
+  gold600: '#c9a015',
+  gold700: '#8a6f10',
+
   // neutrals — dark surface family
   ink950: '#0b0e14',
   ink900: '#11151d',
@@ -59,6 +82,12 @@ export const domainColorSoft: Record<Domain, string> = {
   training: palette.ember300,
 };
 
+/** chrome accents — not domain colours, not signals */
+export const accent = {
+  scarlet: palette.scarlet,
+  bloodOrange: palette.bloodOrange,
+};
+
 export const signal = {
   success: palette.signalGreen,
   error: palette.signalRed,
@@ -66,17 +95,19 @@ export const signal = {
 };
 
 export const surface = {
-  bg: palette.ink950,
-  raised: palette.ink900,
-  card: palette.ink800,
-  line: palette.ink700,
+  bg: palette.deep950, // margins take the same fill as the text boxes
+  raised: palette.deep700, // header and nav chrome — unchanged
+  card: palette.deep700, // panels around the fields stay dark blue
+  line: palette.deep800,
+  field: palette.deep950, // the boxes you type in — darkest surface
+  edge: palette.coal, // near-black rim around every dark blue panel
 };
 
 export const text = {
-  primary: palette.paper,
-  secondary: palette.mist100,
-  muted: palette.mist300,
-  faint: palette.ink500,
+  primary: palette.gold400,
+  secondary: palette.gold300,
+  muted: palette.gold600,
+  faint: palette.gold700,
 };
 
 // Fibonacci spacing

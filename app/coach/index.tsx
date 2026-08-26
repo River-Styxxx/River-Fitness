@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Pressable, View, Text, StyleSheet } from 'react-native';
-import { router, Stack } from 'expo-router';
+import { router } from 'expo-router';
 import { listClients, getLatestDailyAcrossClients, Client, DailySummary, signOut } from '../../src/data';
 import { Screen, H1, Body, Small, Loading, Button } from '../../src/components/ui';
 import { surface, text, space, font, radius, signal, domainColor } from '../../src/theme';
@@ -32,7 +32,6 @@ export default function CoachHome() {
 
   return (
     <Screen>
-      <Stack.Screen options={{ title: 'Coach' }} />
       <H1>Clients</H1>
       {clients.map((c) => {
         const last = latest.get(c.id);

@@ -33,5 +33,5 @@ export function HeaderClock() {
 
 const styles = StyleSheet.create({
   date: { color: text.primary, fontSize: font.body, fontWeight: '700' },
-  clock: { color: text.muted, fontSize: font.body, fontVariant: ['tabular-nums'], marginRight: 13 },
+  clock: { color: text.primary, fontSize: font.body, fontWeight: '700', fontVariant: ['tabular-nums'], marginRight: 13 },
 });

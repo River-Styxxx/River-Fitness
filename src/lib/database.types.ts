@@ -57,9 +57,9 @@ export type Database = {
         Relationships: []
       }
       food_log_entries: {
-        Row: { at: string; carbs_g: number | null; client_id: string; created_at: string; deleted_at: string | null; description: string; fat_g: number | null; food_item_id: string | null; id: string; kcal: number | null; local_date: string | null; protein_g: number | null; qty: string | null; source: string; status: string; tenant_id: string }
-        Insert: { at?: string; carbs_g?: number | null; client_id: string; created_at?: string; deleted_at?: string | null; description: string; fat_g?: number | null; food_item_id?: string | null; id: string; kcal?: number | null; local_date?: string | null; protein_g?: number | null; qty?: string | null; source: string; status?: string; tenant_id: string }
-        Update: { at?: string; carbs_g?: number | null; client_id?: string; created_at?: string; deleted_at?: string | null; description?: string; fat_g?: number | null; food_item_id?: string | null; id?: string; kcal?: number | null; local_date?: string | null; protein_g?: number | null; qty?: string | null; source?: string; status?: string; tenant_id?: string }
+        Row: { at: string; carbs_g: number | null; client_id: string; created_at: string; deleted_at: string | null; description: string; fat_g: number | null; food_item_id: string | null; id: string; kcal: number | null; local_date: string | null; meal_id: string | null; protein_g: number | null; qty: string | null; source: string; status: string; tenant_id: string }
+        Insert: { at?: string; carbs_g?: number | null; client_id: string; created_at?: string; deleted_at?: string | null; description: string; fat_g?: number | null; food_item_id?: string | null; id: string; kcal?: number | null; local_date?: string | null; meal_id?: string | null; protein_g?: number | null; qty?: string | null; source: string; status?: string; tenant_id: string }
+        Update: { at?: string; carbs_g?: number | null; client_id?: string; created_at?: string; deleted_at?: string | null; description?: string; fat_g?: number | null; food_item_id?: string | null; id?: string; kcal?: number | null; local_date?: string | null; meal_id?: string | null; protein_g?: number | null; qty?: string | null; source?: string; status?: string; tenant_id?: string }
         Relationships: []
       }
       messages: {
