@@ -93,16 +93,26 @@ export function TodayScreen({ client, tenantId }: { client: Client | null; tenan
   if (!client) return <Loading />;
 
   const shotCount = Object.keys(shots).length;
+  // a photo, or a named food — either is enough to ask for an estimate
+  const namedCount = items.filter((i) => i.description.trim().length > 0).length;
+  const canEstimate = shotCount > 0 || namedCount > 0;
 
   async function estimate() {
     setEstimateNote(null);
     setEstimating(true);
     try {
       const blobs = (Object.keys(shots) as Shot[]).map((kind) => ({ kind, blob: shots[kind]!.blob }));
+      // with no photos the written descriptions and their weights carry the request
+      const described = toMealItems(items, unit).map((i) => ({
+        description: i.description,
+        qty: i.qty,
+        grams: i.weightG ?? null,
+      }));
       const out = await estimateFromPhotos(blobs, {
         clientId: client?.id ?? null,
         tenantId,
-        totalWeightG: totalWeight.trim() ? Number(totalWeight) : null,
+        totalWeightG: toGrams(totalWeight, unit),
+        items: described,
       });
       if (out.status === 'ok') {
         // estimates are a starting point, not an answer — they land in the same
@@ -269,14 +279,18 @@ export function TodayScreen({ client, tenantId }: { client: Client | null; tenan
             <Text style={styles.hint}>Fill out what you know, as best you can.</Text>
           </View>
         </Row>
-        {shotCount > 0 ? (
+        {canEstimate ? (
           <Pressable
             onPress={estimate}
             disabled={estimating}
             style={({ pressed }) => [styles.estimate, pressed && { opacity: 0.8 }]}
           >
             <Text style={styles.estimateText}>
-              {estimating ? 'Reading your photos…' : `Estimate from ${shotCount === 1 ? 'photo' : 'photos'}`}
+              {estimating
+                ? 'Working it out…'
+                : shotCount > 0
+                  ? `Estimate from ${shotCount === 1 ? 'photo' : 'photos'}`
+                  : 'Estimate the calories'}
             </Text>
           </Pressable>
         ) : null}
@@ -294,7 +308,10 @@ export function TodayScreen({ client, tenantId }: { client: Client | null; tenan
         <View style={{ height: space.m }} />
         <Button label="Log food" onPress={beginLog} />
         {err ? <Text style={{ color: signal.error, marginTop: space.m, fontSize: font.small }}>{err}</Text> : null}
-        <Small>No numbers? Log it anyway — it lands as pending and gets estimated.</Small>
+        <Small>
+          No numbers? Name the food and give a weight, then tap Estimate — or log it anyway and
+          fill it in later.
+        </Small>
       </Card>
 
       <H2 domain="nutrition">Today · {date}</H2>

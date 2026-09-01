@@ -7,8 +7,11 @@
  * estimate never happens on the device — the API cost lands on the coach's
  * account and has to be rate-limited per client.
  *
- * The server side isn't deployed yet. Until it is, this reports `unavailable`
- * rather than inventing numbers — a fabricated macro would be indistinguishable
+ * Two front doors on one brain: photos when they exist, the written description
+ * and its weight when they don't. "300 g pork" is a complete question and the
+ * old photo-only path left it stuck pending with nothing able to resolve it.
+ *
+ * Never invents numbers locally — a fabricated macro would be indistinguishable
  * from a real one once it's in the log.
  */
 import { supabase } from './supabase';
@@ -27,11 +30,23 @@ export type EstimateOutcome =
   | { status: 'unavailable'; reason: string }
   | { status: 'failed'; reason: string };
 
+/** what the text path sends: a name is a complete question when it has a weight */
+export type TextItemInput = { description: string; qty?: string; grams?: number | null };
+
 export async function estimateFromPhotos(
   photos: { kind: string; blob: Blob }[],
-  ctx?: { clientId?: string | null; tenantId?: string | null; totalWeightG?: number | null }
+  ctx?: {
+    clientId?: string | null;
+    tenantId?: string | null;
+    totalWeightG?: number | null;
+    /** described foods — used alone when there are no photos */
+    items?: TextItemInput[];
+  }
 ): Promise<EstimateOutcome> {
-  if (photos.length === 0) return { status: 'failed', reason: 'no photos' };
+  const described = (ctx?.items ?? []).filter((i) => i.description.trim().length > 0);
+  if (photos.length === 0 && described.length === 0) {
+    return { status: 'failed', reason: 'nothing to estimate' };
+  }
 
   const form = new FormData();
   // the filename carries the shot kind, so the server can tell a nutrition
@@ -41,6 +56,19 @@ export async function estimateFromPhotos(
   if (ctx?.tenantId) form.append('tenant_id', ctx.tenantId);
   if (ctx?.totalWeightG && Number.isFinite(ctx.totalWeightG)) {
     form.append('total_weight_g', String(ctx.totalWeightG));
+  }
+  // the server picks its mode from what arrives: photos win, text is the fallback
+  if (described.length > 0) {
+    form.append(
+      'items',
+      JSON.stringify(
+        described.map((i) => ({
+          description: i.description.trim(),
+          qty: i.qty?.trim() || undefined,
+          grams: i.grams ?? undefined,
+        }))
+      )
+    );
   }
 
   try {
@@ -63,7 +91,7 @@ export async function estimateFromPhotos(
       return { status: 'failed', reason: body.reason ?? 'estimate failed' };
     }
     const items = body?.items ?? [];
-    if (items.length === 0) return { status: 'failed', reason: 'nothing recognised in the photo' };
+    if (items.length === 0) return { status: 'failed', reason: 'nothing recognised' };
     return { status: 'ok', items };
   } catch (e) {
     return { status: 'failed', reason: e instanceof Error ? e.message : 'estimate failed' };
