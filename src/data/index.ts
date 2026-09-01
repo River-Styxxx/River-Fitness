@@ -3,7 +3,7 @@
  * calls in components (spec: one data-access layer).
  */
 import { supabase } from '../lib/supabase';
-import type { Tables, TablesInsert } from '../lib/database.types';
+import type { Tables, TablesInsert, TablesUpdate } from '../lib/database.types';
 
 export type Client = Tables<'clients'>;
 export type FoodLogEntry = Tables<'food_log_entries'>;
@@ -155,7 +155,8 @@ export type MealItemInput = {
  * sum rows.
  *
  * A row with no macros is `pending`: the log is never blocked on numbers.
- * Returns the meal_id so attachments can be hung off it.
+ * Returns the meal_id so attachments can be hung off it, and the row ids in
+ * the order they were logged so an async estimate can fill them in after.
  */
 export async function logMeal(input: {
   clientId: string;
@@ -166,7 +167,7 @@ export async function logMeal(input: {
   at?: string | null;
   /** which inaccuracy tier fired and what the client was shown */
   tier?: { id: number; pct: number } | null;
-}): Promise<string> {
+}): Promise<{ mealId: string; entryIds: string[] }> {
   const items = input.items.filter((i) => i.description.trim().length > 0);
   if (items.length === 0) throw new Error('nothing to log');
 
@@ -207,7 +208,63 @@ export async function logMeal(input: {
 
   const { error } = await supabase.from('food_log_entries').upsert(rows, { onConflict: 'id' });
   if (error) throw new Error(error.message);
-  return mealId;
+  return { mealId, entryIds: rows.map((r) => r.id as string) };
+}
+
+/**
+ * Edit one logged food.
+ *
+ * An entry is one row per food, so this edits a single food inside a meal
+ * rather than the meal as a whole. Macros are sent whole — a cleared field
+ * becomes null rather than keeping its old value, which is what makes
+ * "I overcounted, take that number off" possible.
+ *
+ * Recomputing status matters: filling in calories on a pending row has to
+ * promote it to estimated, or the daily views keep ignoring it.
+ */
+export async function updateEntry(
+  id: string,
+  patch: {
+    description?: string;
+    qty?: string | null;
+    weightG?: number | null;
+    enteredValue?: number | null;
+    enteredUnit?: string | null;
+    kcal?: number | null;
+    protein_g?: number | null;
+    carbs_g?: number | null;
+    fat_g?: number | null;
+  }
+): Promise<void> {
+  const row: TablesUpdate<'food_log_entries'> = {};
+  if (patch.description !== undefined) row.description = patch.description.trim();
+  if (patch.qty !== undefined) row.qty = patch.qty?.trim() || null;
+  if (patch.weightG !== undefined) row.weight_g = patch.weightG;
+  if (patch.enteredValue !== undefined) row.entered_value = patch.enteredValue;
+  if (patch.enteredUnit !== undefined) row.entered_unit = patch.enteredUnit;
+  if (patch.kcal !== undefined) {
+    row.kcal = patch.kcal;
+    row.status = patch.kcal != null ? 'estimated' : 'pending';
+  }
+  if (patch.protein_g !== undefined) row.protein_g = patch.protein_g;
+  if (patch.carbs_g !== undefined) row.carbs_g = patch.carbs_g;
+  if (patch.fat_g !== undefined) row.fat_g = patch.fat_g;
+  if (Object.keys(row).length === 0) return;
+
+  const { error } = await supabase.from('food_log_entries').update(row).eq('id', id);
+  if (error) throw new Error(error.message);
+}
+
+/**
+ * Remove a logged food. Soft delete, per the spec's one-way door — the row
+ * stays, the views stop counting it, and it can be brought back.
+ */
+export async function deleteEntry(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('food_log_entries')
+    .update({ deleted_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) throw new Error(error.message);
 }
 
 export async function searchFoodItems(q: string, limit = 20): Promise<FoodItem[]> {

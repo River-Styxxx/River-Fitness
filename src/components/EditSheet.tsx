@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Modal, View, Text, TextInput, Pressable, StyleSheet, ScrollView } from 'react-native';
-import { surface, text, space, font, radius, layout } from '../theme';
+import { surface, text, space, font, radius, layout, signal } from '../theme';
 
 export type SheetField = {
   key: string;
@@ -37,6 +37,8 @@ export function EditSheet({
   lock,
   onCancel,
   onSave,
+  onDelete,
+  deleteLabel,
 }: {
   visible: boolean;
   title: string;
@@ -45,6 +47,9 @@ export function EditSheet({
   lock?: SheetLock;
   onCancel: () => void;
   onSave: (values: Record<string, string>) => void;
+  /** shown only when editing something that already exists */
+  onDelete?: () => void;
+  deleteLabel?: string;
 }) {
   const [draft, setDraft] = useState<Record<string, string>>({});
   const locked = lock ? lock(draft) : null;
@@ -91,6 +96,15 @@ export function EditSheet({
               })}
             </View>
           </ScrollView>
+
+          {onDelete ? (
+            <Pressable
+              onPress={onDelete}
+              style={({ pressed }) => [styles.destroy, pressed && { opacity: 0.7 }]}
+            >
+              <Text style={styles.destroyText}>{deleteLabel ?? 'Remove this food'}</Text>
+            </Pressable>
+          ) : null}
 
           <View style={styles.actions}>
             <Pressable onPress={onCancel} style={({ pressed }) => [styles.cancel, pressed && { opacity: 0.7 }]}>
@@ -146,7 +160,9 @@ const styles = StyleSheet.create({
   inputLocked: { color: text.muted },
   calc: { color: text.faint, fontSize: font.micro, fontWeight: '400' },
   echo: { color: text.faint, fontSize: font.micro, marginTop: space.xs },
-  actions: { flexDirection: 'row', gap: space.m, marginTop: space.xl },
+  destroy: { marginTop: space.l, paddingVertical: space.m, alignItems: 'center' },
+  destroyText: { color: signal.error, fontSize: font.small, fontWeight: '700' },
+  actions: { flexDirection: 'row', gap: space.m, marginTop: space.l },
   cancel: {
     flex: 1,
     paddingVertical: space.l,

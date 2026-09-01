@@ -5,6 +5,8 @@ import {
   getEntriesForDate,
   getTargets,
   logMeal,
+  updateEntry,
+  deleteEntry,
   uploadMealPhotos,
   DailySummary,
   FoodLogEntry,
@@ -16,8 +18,10 @@ import { surface, text, space, font, radius, signal, domainColor } from '../them
 import { PhotoShots, Shot } from '../components/PhotoShots';
 import type { PickedPhoto } from '../lib/photos';
 import { estimateFromPhotos } from '../lib/estimate';
+import { EditSheet, SheetField, SheetLock } from '../components/EditSheet';
 import {
   MealComposer,
+  derive,
   DraftItem,
   MealMacros,
   emptyItem,
@@ -45,7 +49,7 @@ import {
   formatBand,
   SUGGESTION_GATE,
 } from '../lib/inaccuracy';
-import { WeightUnit, DEFAULT_UNIT, toGrams } from '../lib/units';
+import { WeightUnit, DEFAULT_UNIT, toGrams, fromGrams, gramEcho, unitDef } from '../lib/units';
 
 function todayLocal(tz: string): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date());
@@ -68,6 +72,7 @@ export function TodayScreen({ client, tenantId }: { client: Client | null; tenan
   const [stamp, setStamp] = useState<Stamp>(nowStamp());
   const [step, setStep] = useState<'idle' | 'warn' | 'stamp' | 'summary'>('idle');
   const [pending, setPending] = useState<{ pct: number; id: number } | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [estimating, setEstimating] = useState(false);
   const [estimateNote, setEstimateNote] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -194,13 +199,76 @@ export function TodayScreen({ client, tenantId }: { client: Client | null; tenan
     setStep(tier.id === 0 ? 'stamp' : 'warn');
   }
 
+  /**
+   * Fill in a meal that was logged without numbers.
+   *
+   * Runs AFTER the meal is already saved, never before — the spec's rule is
+   * that the log is never blocked on an estimate. The row appears as pending
+   * immediately and fills itself in a few seconds later. Before this existed
+   * `pending` was terminal: nothing in the system ever came back for it.
+   *
+   * Only writes when the mapping is unambiguous — one logged row, or the model
+   * returned exactly as many foods as were logged. A model that splits
+   * "chicken and rice" into two rows against one logged line is not something
+   * to guess at, so those stay pending for a person to finish.
+   */
+  async function autoEstimate(
+    entryIds: string[],
+    described: { description: string; qty?: string; grams?: number | null }[],
+    photos: { kind: Shot; blob: Blob }[],
+    weightG: number | null
+  ) {
+    try {
+      const out = await estimateFromPhotos(photos, {
+        clientId: client?.id ?? null,
+        tenantId,
+        totalWeightG: weightG,
+        items: described,
+      });
+      if (out.status !== 'ok' || out.items.length === 0) return;
+
+      const round = (v?: number) => (v == null ? null : Math.round(v));
+
+      if (entryIds.length === 1) {
+        // one row: carry the whole estimate onto it, summed
+        const sum = (k: 'kcal' | 'protein_g' | 'carbs_g' | 'fat_g') =>
+          out.items.reduce((a, i) => a + (i[k] ?? 0), 0);
+        await updateEntry(entryIds[0], {
+          description: out.items.length === 1 ? out.items[0].description : described[0].description,
+          kcal: round(sum('kcal')),
+          protein_g: round(sum('protein_g')),
+          carbs_g: round(sum('carbs_g')),
+          fat_g: round(sum('fat_g')),
+        });
+      } else if (out.items.length === entryIds.length) {
+        await Promise.all(
+          entryIds.map((id, i) =>
+            updateEntry(id, {
+              description: out.items[i].description,
+              kcal: round(out.items[i].kcal),
+              protein_g: round(out.items[i].protein_g),
+              carbs_g: round(out.items[i].carbs_g),
+              fat_g: round(out.items[i].fat_g),
+            })
+          )
+        );
+      } else {
+        return; // ambiguous — leave it for a person
+      }
+      await load();
+    } catch {
+      // the meal is already saved; a failed estimate costs nothing but the numbers
+    }
+  }
+
   async function commit() {
     if (!client || !tenantId) return;
     try {
-      const mealId = await logMeal({
+      const mealItems = toMealItems(items, unit);
+      const { mealId, entryIds } = await logMeal({
         clientId: client.id,
         tenantId,
-        items: toMealItems(items, unit),
+        items: mealItems,
         mealMacros: toMealMacros(mealMacros),
         at: stampToISO(stamp),
         tier: pending ? { id: pending.id, pct: pending.pct } : null,
@@ -217,21 +285,146 @@ export function TodayScreen({ client, tenantId }: { client: Client | null; tenan
         if (out.failed.length > 0) setErr(`Meal saved. Photo upload failed — ${out.failed[0]}`);
       }
 
+      // snapshot what the estimate needs before the composer is cleared
+      const needsNumbers = mealItems.some((i) => i.kcal == null);
+      const described = mealItems.map((i) => ({
+        description: i.description,
+        qty: i.qty,
+        grams: i.weightG ?? null,
+      }));
+      const weightSnapshot = toGrams(totalWeight, unit);
+
       setItems([emptyItem(`i${Date.now()}`)]);
       setMealMacros(emptyMacros());
       setShots({});
       setTotalWeight('');
       setPending(null);
       await load();
+
+      if (needsNumbers) {
+        setEstimateNote('Working out the numbers…');
+        await autoEstimate(entryIds, described, photos, weightSnapshot);
+        setEstimateNote(null);
+      }
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'failed');
     }
   }
 
+  /**
+   * The day reads as meals, not as a wall of foods.
+   *
+   * Everything logged in one go shares a meal_id, so that is the grouping —
+   * a yogurt bowl entered as five foods is one block with five lines, not five
+   * separate cards. Rows imported before meal_id existed carry null, and each
+   * of those stands alone rather than collapsing into one giant fake meal.
+   */
+  const meals = (() => {
+    const list = entries ?? [];
+    const order: string[] = [];
+    const byMeal = new Map<string, FoodLogEntry[]>();
+    list.forEach((e) => {
+      const key = e.meal_id ?? `solo:${e.id}`;
+      if (!byMeal.has(key)) {
+        byMeal.set(key, []);
+        order.push(key);
+      }
+      byMeal.get(key)!.push(e);
+    });
+    return order.map((key) => {
+      const rows = byMeal.get(key)!;
+      const sum = (f: (e: FoodLogEntry) => number | null) =>
+        rows.reduce((a, e) => a + (Number(f(e) ?? 0) || 0), 0);
+      const anyNumbers = rows.some((e) => e.kcal != null);
+      return {
+        key,
+        rows,
+        at: rows[0]?.at ?? null,
+        kcal: sum((e) => e.kcal as number | null),
+        protein: sum((e) => e.protein_g as number | null),
+        pending: !anyNumbers,
+      };
+    });
+  })();
+
   const kcalNow = Number(today?.kcal ?? 0);
   const pNow = Number(today?.protein_g ?? 0);
   const cNow = Number(today?.carbs_g ?? 0);
   const fNow = Number(today?.fat_g ?? 0);
+  const editing = (entries ?? []).find((e) => e.id === editingId) ?? null;
+
+  const numOrNull = (v: string): number | null => {
+    const t = (v ?? '').trim();
+    if (!t) return null;
+    const n = Number(t);
+    return Number.isFinite(n) ? n : null;
+  };
+
+  const entryFields = (e: FoodLogEntry): SheetField[] => {
+    const shown = (v: number | null) => (v == null ? '' : String(Math.round(Number(v))));
+    return [
+      { key: 'description', label: 'Food', value: e.description, placeholder: 'what was it?' },
+      { key: 'qty', label: 'Amount', value: e.qty ?? '', placeholder: '1 bowl, 2 scoops' },
+      {
+        key: 'weight',
+        label: `Weight (${unitDef(unit).label})`,
+        value: e.weight_g != null ? fromGrams(Number(e.weight_g), unit) : '',
+        numeric: true,
+        echo: (d) => gramEcho(d.weight ?? '', unit),
+      },
+      { key: 'kcal', label: 'Calories', value: shown(e.kcal as number | null), numeric: true, half: true },
+      { key: 'protein', label: 'Protein (g)', value: shown(e.protein_g as number | null), numeric: true, half: true },
+      { key: 'carbs', label: 'Carbs (g)', value: shown(e.carbs_g as number | null), numeric: true, half: true },
+      { key: 'fat', label: 'Fat (g)', value: shown(e.fat_g as number | null), numeric: true, half: true },
+    ];
+  };
+
+  // same three-of-four rule the composer uses, so editing behaves like entering
+  const macroLock: SheetLock = (d) => {
+    const out = derive({
+      kcal: d.kcal ?? '',
+      protein: d.protein ?? '',
+      carbs: d.carbs ?? '',
+      fat: d.fat ?? '',
+    });
+    return out.field === 'none' ? null : { key: out.field, value: out.value };
+  };
+
+  async function saveEdit(v: Record<string, string>) {
+    if (!editing) return;
+    const id = editing.id;
+    setEditingId(null);
+    try {
+      const grams = toGrams(v.weight ?? '', unit);
+      await updateEntry(id, {
+        description: v.description ?? '',
+        qty: v.qty ?? null,
+        weightG: grams,
+        enteredValue: numOrNull(v.weight ?? ''),
+        enteredUnit: (v.weight ?? '').trim() ? unit : null,
+        kcal: numOrNull(v.kcal ?? ''),
+        protein_g: numOrNull(v.protein ?? ''),
+        carbs_g: numOrNull(v.carbs ?? ''),
+        fat_g: numOrNull(v.fat ?? ''),
+      });
+      await load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'could not save that edit');
+    }
+  }
+
+  async function removeEntry() {
+    if (!editing) return;
+    const id = editing.id;
+    setEditingId(null);
+    try {
+      await deleteEntry(id);
+      await load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'could not remove that');
+    }
+  }
+
   // the day's band combines each meal's own tier in quadrature; entries logged
   // before tiers existed carry no percentage and simply don't widen it
   const dayBand = combineBands(
@@ -320,25 +513,64 @@ export function TodayScreen({ client, tenantId }: { client: Client | null; tenan
       ) : entries.length === 0 ? (
         <Body muted>Nothing logged yet.</Body>
       ) : (
-        entries.map((e) => (
-          <View key={e.id} style={styles.entry}>
-            <View style={{ flex: 1 }}>
-              <Body>{e.description}</Body>
-              {e.qty ? <Small>{e.qty}</Small> : null}
-            </View>
-            <View style={{ alignItems: 'flex-end' }}>
-              <Text style={styles.entryKcal}>
-                {e.kcal != null ? `${Math.round(Number(e.kcal))} kcal` : e.status === 'pending' ? 'pending' : '—'}
+        meals.map((m) => (
+          <View key={m.key} style={styles.meal}>
+            <View style={styles.mealHead}>
+              <Text style={styles.mealWhen}>
+                {m.at
+                  ? clock12(new Date(m.at).getHours() * 60 + new Date(m.at).getMinutes())
+                  : 'earlier'}
+                {m.rows.length > 1 ? ` · ${m.rows.length} foods` : ''}
               </Text>
-              {e.at ? (
-                <Text style={styles.entryWhen}>
-                  {clock12(new Date(e.at).getHours() * 60 + new Date(e.at).getMinutes())}
-                </Text>
-              ) : null}
+              <Text style={styles.mealTotal}>
+                {m.pending
+                  ? 'pending'
+                  : `${Math.round(m.kcal).toLocaleString('en-US')} kcal · ${Math.round(m.protein)}g P`}
+              </Text>
             </View>
+
+            {m.rows.map((e) => (
+              <Pressable
+                key={e.id}
+                onPress={() => setEditingId(e.id)}
+                style={({ pressed }) => [styles.entry, pressed && { opacity: 0.85 }]}
+              >
+                <View style={{ flex: 1 }}>
+                  <Body>{e.description}</Body>
+                  <Small>
+                    {[
+                      e.weight_g != null
+                        ? `${fromGrams(Number(e.weight_g), unit)}${unitDef(unit).label}`
+                        : null,
+                      e.qty,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ') || 'tap to edit'}
+                  </Small>
+                </View>
+                <Text style={styles.entryKcal}>
+                  {e.kcal != null
+                    ? `${Math.round(Number(e.kcal))} kcal`
+                    : e.status === 'pending'
+                      ? 'pending'
+                      : '—'}
+                </Text>
+              </Pressable>
+            ))}
           </View>
         ))
       )}
+
+      <EditSheet
+        visible={editing !== null}
+        title="Edit This Food"
+        hint="Clear a number to take it back off the day. Any three macros fill in the fourth."
+        fields={editing ? entryFields(editing) : []}
+        lock={macroLock}
+        onCancel={() => setEditingId(null)}
+        onSave={saveEdit}
+        onDelete={removeEntry}
+      />
 
       <InaccuracySheet
         visible={step === 'warn'}
@@ -376,13 +608,32 @@ const styles = StyleSheet.create({
   // a text input has an intrinsic content width on web; without minWidth: 0 a
   // flex row refuses to shrink it and the second field spills past the card
   inputInRow: { flex: 1, minWidth: 0 },
+  meal: {
+    backgroundColor: surface.card,
+    borderRadius: radius.m,
+    padding: space.m,
+    marginBottom: space.m,
+  },
+  mealHead: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    gap: space.m,
+    paddingHorizontal: space.s,
+    paddingBottom: space.s,
+    marginBottom: space.s,
+    borderBottomWidth: 1,
+    borderBottomColor: surface.line,
+  },
+  mealWhen: { color: text.muted, fontSize: font.micro, fontWeight: '700' },
+  mealTotal: { color: text.secondary, fontSize: font.small, fontWeight: '700' },
   entry: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: surface.card,
+    backgroundColor: surface.field,
     borderRadius: radius.s,
-    padding: space.l,
-    marginBottom: space.s,
+    padding: space.m,
+    marginBottom: space.xs,
     gap: space.m,
   },
   entryKcal: { color: domainColor.nutrition, fontSize: font.small, fontWeight: '600' },
