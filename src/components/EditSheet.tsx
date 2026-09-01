@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Modal, View, Text, TextInput, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { surface, text, space, font, radius, layout, signal } from '../theme';
+import { holdReload } from '../lib/build';
 
 export type SheetField = {
   key: string;
@@ -64,6 +65,12 @@ export function EditSheet({
 }) {
   const [draft, setDraft] = useState<Record<string, string>>({});
   const locked = lock ? lock(draft) : null;
+
+  // an automatic reload must not land on top of half-typed numbers
+  useEffect(() => {
+    if (!visible) return;
+    return holdReload();
+  }, [visible]);
 
   // reopening always starts from what is currently stored, never from the last edit
   useEffect(() => {

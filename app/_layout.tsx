@@ -5,6 +5,7 @@ import { supabase } from '../src/lib/supabase';
 import { resolveRole, Role, Client } from '../src/data';
 import { surface, text } from '../src/theme';
 import { Loading } from '../src/components/ui';
+import { watchForForcedUpdate } from '../src/lib/build';
 
 type Session = { role: Role; client: Client | null; tenantId: string | null; userId: string | null; ready: boolean };
 
@@ -29,6 +30,10 @@ export default function RootLayout() {
       sub.subscription.unsubscribe();
     };
   }, []);
+
+  // a build below the server's floor, or a newer bundle on the host, reloads
+  // itself — quietly, and never while someone is mid-sentence in a sheet
+  useEffect(() => watchForForcedUpdate(), []);
 
   if (!state.ready) return <Loading />;
 

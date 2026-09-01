@@ -3,12 +3,19 @@ import { Modal, View, Text, Pressable, StyleSheet, ScrollView } from 'react-nati
 import { surface, text, space, font, radius, layout, accent } from '../theme';
 import { MacroPie, macroSlices, MACRO_HUE, MacroKeyName } from './MacroPie';
 import { macroBand, formatBand } from '../lib/inaccuracy';
+import { holdReload } from '../lib/build';
 
 /* ------------------------------------------------------------------ */
 /* shared chrome                                                       */
 /* ------------------------------------------------------------------ */
 
 function Sheet({ visible, onClose, children }: { visible: boolean; onClose: () => void; children: React.ReactNode }) {
+  // the log flow is mid-transaction; a reload here would drop the meal
+  useEffect(() => {
+    if (!visible) return;
+    return holdReload();
+  }, [visible]);
+
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.scrim}>

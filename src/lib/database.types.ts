@@ -12,6 +12,12 @@ export type Database = {
   __InternalSupabase: { PostgrestVersion: "14.15" }
   public: {
     Tables: {
+      app_release: {
+        Row: { id: string; min_build: string; note: string | null; updated_at: string }
+        Insert: { id: string; min_build: string; note?: string | null; updated_at?: string }
+        Update: { id?: string; min_build?: string; note?: string | null; updated_at?: string }
+        Relationships: []
+      }
       attachments: {
         Row: { created_at: string; deleted_at: string | null; entity_id: string; entity_type: string; id: string; kind: string | null; storage_path: string; tenant_id: string }
         Insert: { created_at?: string; deleted_at?: string | null; entity_id: string; entity_type: string; id?: string; kind?: string | null; storage_path: string; tenant_id: string }
