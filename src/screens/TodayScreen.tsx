@@ -25,6 +25,27 @@ import {
   toMealItems,
   toMealMacros,
 } from '../components/MealComposer';
+import {
+  InaccuracySheet,
+  TimeStampSheet,
+  SummarySheet,
+  MacroBreakdown,
+  Stamp,
+  nowStamp,
+  stampToISO,
+  clock12,
+} from '../components/LogFlowSheets';
+import {
+  MealShape,
+  emptyContext,
+  tierFor,
+  suggestionFor,
+  combineBands,
+  macroBand,
+  formatBand,
+  SUGGESTION_GATE,
+} from '../lib/inaccuracy';
+import { WeightUnit, DEFAULT_UNIT, toGrams } from '../lib/units';
 
 function todayLocal(tz: string): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date());
@@ -42,6 +63,11 @@ export function TodayScreen({ client, tenantId }: { client: Client | null; tenan
   const [mealMacros, setMealMacros] = useState<MealMacros>(emptyMacros());
   const [shots, setShots] = useState<Partial<Record<Shot, PickedPhoto>>>({});
   const [totalWeight, setTotalWeight] = useState('');
+  const [unit, setUnit] = useState<WeightUnit>(DEFAULT_UNIT);
+  const [context] = useState(emptyContext());
+  const [stamp, setStamp] = useState<Stamp>(nowStamp());
+  const [step, setStep] = useState<'idle' | 'warn' | 'stamp' | 'summary'>('idle');
+  const [pending, setPending] = useState<{ pct: number; id: number } | null>(null);
   const [estimating, setEstimating] = useState(false);
   const [estimateNote, setEstimateNote] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -102,15 +128,72 @@ export function TodayScreen({ client, tenantId }: { client: Client | null; tenan
     }
   }
 
-  async function add() {
+  /** What the tier engine reads: grams, photos, context — never display units. */
+  function shapeOf(): MealShape {
+    const mealItems = toMealItems(items, unit);
+    return {
+      items: mealItems.map((i) => ({
+        weightG: i.weightG ?? null,
+        kcal: i.kcal ?? null,
+        protein: i.protein_g ?? null,
+        carbs: i.carbs_g ?? null,
+        fat: i.fat_g ?? null,
+      })),
+      totalWeightG: toGrams(totalWeight, unit),
+      photos: {
+        top: shots.top != null,
+        angle: shots.angle != null,
+        label: shots.label != null,
+      },
+      context: { ...context, packaged: shots.label != null },
+    };
+  }
+
+  /** Totals for the meal being logged, from per-item macros or the meal block. */
+  function draftMacros() {
+    const mealItems = toMealItems(items, unit);
+    const anyPerItem = mealItems.some(
+      (i) => i.kcal != null || i.protein_g != null || i.carbs_g != null || i.fat_g != null
+    );
+    if (anyPerItem) {
+      const sum = (k: 'protein_g' | 'carbs_g' | 'fat_g') =>
+        mealItems.reduce((a, i) => a + (i[k] ?? 0), 0);
+      return { protein: sum('protein_g'), carbs: sum('carbs_g'), fat: sum('fat_g') };
+    }
+    const m = toMealMacros(mealMacros);
+    return { protein: m.protein_g ?? 0, carbs: m.carbs_g ?? 0, fat: m.fat_g ?? 0 };
+  }
+
+  const draft = draftMacros();
+  const draftKcal = draft.protein * 4 + draft.carbs * 4 + draft.fat * 9;
+
+  /**
+   * Step 1. A complete entry skips the warning entirely — that is the original
+   * trigger, and tier 0 is exactly "nothing is missing".
+   */
+  function beginLog() {
     if (!client || !tenantId) return;
+    if (toMealItems(items, unit).length === 0) {
+      setErr('Add at least one food.');
+      return;
+    }
     setErr(null);
+    const tier = tierFor(shapeOf());
+    setPending({ pct: tier.pct, id: tier.id });
+    setStamp(nowStamp());
+    setStep(tier.id === 0 ? 'stamp' : 'warn');
+  }
+
+  async function commit() {
+    if (!client || !tenantId) return;
     try {
       const mealId = await logMeal({
         clientId: client.id,
         tenantId,
-        items: toMealItems(items),
+        items: toMealItems(items, unit),
         mealMacros: toMealMacros(mealMacros),
+        at: stampToISO(stamp),
+        tier: pending ? { id: pending.id, pct: pending.pct } : null,
       });
 
       // the meal is already committed; photos are a best-effort follow-up so a
@@ -128,6 +211,7 @@ export function TodayScreen({ client, tenantId }: { client: Client | null; tenan
       setMealMacros(emptyMacros());
       setShots({});
       setTotalWeight('');
+      setPending(null);
       await load();
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'failed');
@@ -138,6 +222,13 @@ export function TodayScreen({ client, tenantId }: { client: Client | null; tenan
   const pNow = Number(today?.protein_g ?? 0);
   const cNow = Number(today?.carbs_g ?? 0);
   const fNow = Number(today?.fat_g ?? 0);
+  // the day's band combines each meal's own tier in quadrature; entries logged
+  // before tiers existed carry no percentage and simply don't widen it
+  const dayBand = combineBands(
+    (entries ?? [])
+      .filter((e) => e.kcal != null && e.tier_pct != null)
+      .map((e) => ({ kcal: Number(e.kcal), pct: Number(e.tier_pct) }))
+  );
   const kcalTarget = target?.kcal ? Number(target.kcal) : null;
   const pTarget = target?.protein_g ? Number(target.protein_g) : null;
   const cTarget = target?.carbs_g ? Number(target.carbs_g) : null;
@@ -152,6 +243,21 @@ export function TodayScreen({ client, tenantId }: { client: Client | null; tenan
       <Row style={{ marginTop: space.s }}>
         <StatTile label="P G/100kcal" value={today?.protein_g_per_100kcal ?? '—'} domain="coaching" />
       </Row>
+
+      <Card style={{ marginTop: space.l }} domain="nutrition">
+        <H2>Day So Far</H2>
+        <Text style={styles.dayKcal}>{Math.round(kcalNow).toLocaleString('en-US')} kcal</Text>
+        <MacroBreakdown macros={{ protein: pNow, carbs: cNow, fat: fNow }} kcal={kcalNow} swatches />
+        {dayBand.kcal > 0 ? (
+          <View style={styles.dayBand}>
+            <Text style={styles.dayBandHead}>{formatBand(dayBand.kcal, dayBand.pct)}</Text>
+            <Text style={styles.dayBandSplit}>
+              Protein ±{macroBand(dayBand.pct, 'protein')}% · Carbs ±{macroBand(dayBand.pct, 'carbs')}% ·
+              Fat ±{macroBand(dayBand.pct, 'fat')}%
+            </Text>
+          </View>
+        ) : null}
+      </Card>
 
       <Card style={{ marginTop: space.l }} domain="nutrition">
         <Row style={{ alignItems: 'baseline' }}>
@@ -175,11 +281,18 @@ export function TodayScreen({ client, tenantId }: { client: Client | null; tenan
           </Pressable>
         ) : null}
         {estimateNote ? <Text style={styles.estimateNote}>{estimateNote}</Text> : null}
-        <MealComposer items={items} onItems={setItems} macros={mealMacros} onMacros={setMealMacros} />
+        <MealComposer
+          items={items}
+          onItems={setItems}
+          macros={mealMacros}
+          onMacros={setMealMacros}
+          unit={unit}
+          onUnit={setUnit}
+        />
         <Text style={styles.section}>Photos</Text>
         <PhotoShots shots={shots} onChange={setShots} weight={totalWeight} onWeight={setTotalWeight} />
         <View style={{ height: space.m }} />
-        <Button label="Add" onPress={add} />
+        <Button label="Log food" onPress={beginLog} />
         {err ? <Text style={{ color: signal.error, marginTop: space.m, fontSize: font.small }}>{err}</Text> : null}
         <Small>No numbers? Log it anyway — it lands as pending and gets estimated.</Small>
       </Card>
@@ -196,12 +309,48 @@ export function TodayScreen({ client, tenantId }: { client: Client | null; tenan
               <Body>{e.description}</Body>
               {e.qty ? <Small>{e.qty}</Small> : null}
             </View>
-            <Text style={styles.entryKcal}>
-              {e.kcal != null ? `${Math.round(Number(e.kcal))} kcal` : e.status === 'pending' ? 'pending' : '—'}
-            </Text>
+            <View style={{ alignItems: 'flex-end' }}>
+              <Text style={styles.entryKcal}>
+                {e.kcal != null ? `${Math.round(Number(e.kcal))} kcal` : e.status === 'pending' ? 'pending' : '—'}
+              </Text>
+              {e.at ? (
+                <Text style={styles.entryWhen}>
+                  {clock12(new Date(e.at).getHours() * 60 + new Date(e.at).getMinutes())}
+                </Text>
+              ) : null}
+            </View>
           </View>
         ))
       )}
+
+      <InaccuracySheet
+        visible={step === 'warn'}
+        pct={pending?.pct ?? 0}
+        suggestion={
+          pending && pending.pct >= SUGGESTION_GATE ? suggestionFor(shapeOf()) : null
+        }
+        onBack={() => setStep('idle')}
+        onContinue={() => setStep('stamp')}
+      />
+
+      <TimeStampSheet
+        visible={step === 'stamp'}
+        stamp={stamp}
+        onStamp={setStamp}
+        onBack={() => setStep('idle')}
+        onContinue={() => setStep('summary')}
+      />
+
+      <SummarySheet
+        visible={step === 'summary'}
+        macros={draft}
+        kcal={draftKcal}
+        pct={pending?.pct ?? 0}
+        onDone={() => {
+          setStep('idle');
+          void commit();
+        }}
+      />
     </Screen>
   );
 }
@@ -232,4 +381,9 @@ const styles = StyleSheet.create({
   estimateText: { color: domainColor.nutrition, fontSize: font.small, fontWeight: '700' },
   estimateNote: { color: text.muted, fontSize: font.micro, marginTop: space.s },
   hint: { color: text.muted, fontSize: font.micro, textAlign: 'right' },
+  dayKcal: { color: text.secondary, fontSize: font.heading, fontWeight: '700', marginBottom: space.m },
+  dayBand: { borderTopWidth: 1, borderTopColor: surface.line, marginTop: space.m, paddingTop: space.m, gap: space.xs },
+  dayBandHead: { color: text.secondary, fontSize: font.small, fontWeight: '600' },
+  dayBandSplit: { color: text.muted, fontSize: font.micro },
+  entryWhen: { color: text.faint, fontSize: font.micro },
 });

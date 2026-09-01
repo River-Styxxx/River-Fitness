@@ -134,6 +134,11 @@ export function newId(): string {
 export type MealItemInput = {
   description: string;
   qty?: string;
+  /** canonical grams — units are a display concern, nothing else stores oz */
+  weightG?: number | null;
+  /** what the client actually typed, so reopening shows their number back */
+  enteredValue?: number | null;
+  enteredUnit?: string | null;
   kcal?: number;
   protein_g?: number;
   carbs_g?: number;
@@ -157,6 +162,10 @@ export async function logMeal(input: {
   tenantId: string;
   items: MealItemInput[];
   mealMacros?: { kcal?: number; protein_g?: number; carbs_g?: number; fat_g?: number };
+  /** ISO instant for the meal; omitted means now. local_date follows from it. */
+  at?: string | null;
+  /** which inaccuracy tier fired and what the client was shown */
+  tier?: { id: number; pct: number } | null;
 }): Promise<string> {
   const items = input.items.filter((i) => i.description.trim().length > 0);
   if (items.length === 0) throw new Error('nothing to log');
@@ -185,6 +194,12 @@ export async function logMeal(input: {
       carbs_g: macros.carbs_g ?? null,
       fat_g: macros.fat_g ?? null,
       food_item_id: item.foodItemId ?? null,
+      weight_g: item.weightG ?? null,
+      entered_value: item.enteredValue ?? null,
+      entered_unit: item.enteredUnit ?? null,
+      tier_id: input.tier?.id ?? null,
+      tier_pct: input.tier?.pct ?? null,
+      ...(input.at ? { at: input.at } : {}),
       status: macros.kcal != null ? 'estimated' : 'pending',
       source: 'app',
     };

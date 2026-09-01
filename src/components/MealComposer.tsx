@@ -2,12 +2,23 @@ import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { surface, text, space, font, radius, domainColor } from '../theme';
 import type { MealItemInput } from '../data';
-import { EditSheet, SheetField } from './EditSheet';
+import { EditSheet, SheetField, SheetLock } from './EditSheet';
+import {
+  WeightUnit,
+  WEIGHT_UNITS,
+  UNITS_ENABLED,
+  unitDef,
+  toGrams,
+  gramEcho,
+  convertDisplay,
+} from '../lib/units';
 
 export type DraftItem = {
   key: string;
   description: string;
   qty: string;
+  /** typed in whatever unit is on screen; grams are derived, never stored here */
+  weight: string;
   open: boolean;
   kcal: string;
   protein: string;
@@ -21,6 +32,7 @@ export const emptyItem = (key: string): DraftItem => ({
   key,
   description: '',
   qty: '',
+  weight: '',
   open: false,
   kcal: '',
   protein: '',
@@ -86,12 +98,15 @@ const setOf = (o: { kcal: string; protein: string; carbs: string; fat: string })
 });
 
 /** Per-item macros win when any were entered; otherwise the meal block applies. */
-export function toMealItems(items: DraftItem[]): MealItemInput[] {
+export function toMealItems(items: DraftItem[], unit: WeightUnit = 'g'): MealItemInput[] {
   return items
     .filter((i) => i.description.trim())
     .map((i) => ({
       description: i.description,
       qty: i.qty,
+      weightG: toGrams(i.weight, unit),
+      enteredValue: i.weight.trim() ? Number(i.weight) : null,
+      enteredUnit: i.weight.trim() ? unit : null,
       ...(() => {
         const e = effective(setOf(i));
         return {
@@ -122,11 +137,15 @@ export function MealComposer({
   onItems,
   macros,
   onMacros,
+  unit,
+  onUnit,
 }: {
   items: DraftItem[];
   onItems: (next: DraftItem[]) => void;
   macros: MealMacros;
   onMacros: (next: MealMacros) => void;
+  unit: WeightUnit;
+  onUnit: (u: WeightUnit) => void;
 }) {
   const totals = itemTotals(items);
 
@@ -150,18 +169,64 @@ export function MealComposer({
 
   const itemFields = (i: DraftItem): SheetField[] => [
     { key: 'description', label: 'Food', value: i.description, placeholder: 'what was it?' },
-    { key: 'qty', label: 'Amount', value: i.qty, placeholder: '200g, 1 bowl, 2 scoops' },
+    { key: 'qty', label: 'Amount', value: i.qty, placeholder: '1 bowl, 2 scoops' },
+    {
+      key: 'weight',
+      label: `Weight (${unitDef(unit).label})`,
+      value: i.weight,
+      numeric: true,
+      placeholder: 'on a scale, if you have one',
+      echo: (d) => gramEcho(d.weight ?? '', unit),
+    },
     { key: 'kcal', label: 'Calories', value: i.kcal, numeric: true, half: true },
     { key: 'protein', label: 'Protein (g)', value: i.protein, numeric: true, half: true },
     { key: 'carbs', label: 'Carbs (g)', value: i.carbs, numeric: true, half: true },
     { key: 'fat', label: 'Fat (g)', value: i.fat, numeric: true, half: true },
   ];
 
+  /**
+   * Three of the four filled means the fourth is known. We fill it and lock it
+   * rather than letting someone type a set that contradicts itself — which is
+   * also why there is no "your numbers don't add up" state to design.
+   */
+  const macroLock: SheetLock = (d) => {
+    const out = derive({
+      kcal: d.kcal ?? '',
+      protein: d.protein ?? '',
+      carbs: d.carbs ?? '',
+      fat: d.fat ?? '',
+    });
+    return out.field === 'none' ? null : { key: out.field, value: out.value };
+  };
+
   const editing = items.find((i) => i.key === openItem) ?? null;
 
   return (
     <View>
-      <Text style={styles.section}>What Did You Eat?</Text>
+      <View style={styles.headRow}>
+        <Text style={styles.section}>What Did You Eat?</Text>
+        {UNITS_ENABLED ? (
+          <View style={styles.seg}>
+            {WEIGHT_UNITS.map((u) => {
+              const on = u.key === unit;
+              return (
+                <Pressable
+                  key={u.key}
+                  onPress={() => {
+                    if (on) return;
+                    // convert through grams so nothing drifts on a toggle
+                    onItems(items.map((i) => ({ ...i, weight: convertDisplay(i.weight, unit, u.key) })));
+                    onUnit(u.key);
+                  }}
+                  style={[styles.segBtn, on && styles.segBtnOn]}
+                >
+                  <Text style={[styles.segText, on && styles.segTextOn]}>{u.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        ) : null}
+      </View>
 
       {items.map((item, idx) => (
         <Pressable
@@ -173,7 +238,14 @@ export function MealComposer({
             <Text style={[styles.itemName, !item.description && styles.itemEmpty]} numberOfLines={1}>
               {item.description || (idx === 0 ? 'Add A Food' : 'And…')}
             </Text>
-            {item.qty ? <Text style={styles.itemQty}>{item.qty}</Text> : null}
+            {item.weight ? (
+              <Text style={styles.itemQty}>
+                {item.weight}
+                {unitDef(unit).label}
+              </Text>
+            ) : item.qty ? (
+              <Text style={styles.itemQty}>{item.qty}</Text>
+            ) : null}
             {items.length > 1 ? (
               <Pressable
                 onPress={() => onItems(items.filter((i) => i.key !== item.key))}
@@ -225,11 +297,13 @@ export function MealComposer({
         title="This Item"
         hint="Fill in what you know. Enter any three of the four macros and the fourth is worked out."
         fields={editing ? itemFields(editing) : []}
+        lock={macroLock}
         onCancel={() => setOpenItem(null)}
         onSave={(v) => {
           patch(editing!.key, {
             description: v.description ?? '',
             qty: v.qty ?? '',
+            weight: v.weight ?? '',
             kcal: v.kcal ?? '',
             protein: v.protein ?? '',
             carbs: v.carbs ?? '',
@@ -249,6 +323,7 @@ export function MealComposer({
           { key: 'carbs', label: 'Carbs (g)', value: macros.carbs, numeric: true, half: true },
           { key: 'fat', label: 'Fat (g)', value: macros.fat, numeric: true, half: true },
         ]}
+        lock={macroLock}
         onCancel={() => setOpenMeal(false)}
         onSave={(v) => {
           onMacros({
@@ -266,6 +341,12 @@ export function MealComposer({
 
 const styles = StyleSheet.create({
   section: { color: text.primary, fontSize: font.body, fontWeight: '700', marginBottom: space.m, marginTop: space.m },
+  headRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space.m },
+  seg: { flexDirection: 'row', backgroundColor: surface.field, borderRadius: radius.s, overflow: 'hidden' },
+  segBtn: { paddingVertical: space.s, paddingHorizontal: space.l },
+  segBtnOn: { backgroundColor: surface.line },
+  segText: { color: text.faint, fontSize: font.small, fontWeight: '600' },
+  segTextOn: { color: text.primary, fontWeight: '700' },
   itemBlock: {
     backgroundColor: surface.field,
     borderRadius: radius.s,

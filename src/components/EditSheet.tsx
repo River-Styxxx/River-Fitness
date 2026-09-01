@@ -10,7 +10,16 @@ export type SheetField = {
   placeholder?: string;
   /** render two per row instead of one full-width */
   half?: boolean;
+  /** small line under the field — the gram echo on an oz input */
+  echo?: (draft: Record<string, string>) => string;
 };
+
+/**
+ * Given the live draft, which field is calculated and what it holds.
+ * Three of four macros filled means the fourth is known, so we fill it and
+ * lock it rather than inviting someone to type a number that disagrees.
+ */
+export type SheetLock = (draft: Record<string, string>) => { key: string; value: string } | null;
 
 /**
  * Fields open a sheet instead of taking a caret inline.
@@ -25,6 +34,7 @@ export function EditSheet({
   title,
   hint,
   fields,
+  lock,
   onCancel,
   onSave,
 }: {
@@ -32,10 +42,12 @@ export function EditSheet({
   title: string;
   hint?: string;
   fields: SheetField[];
+  lock?: SheetLock;
   onCancel: () => void;
   onSave: (values: Record<string, string>) => void;
 }) {
   const [draft, setDraft] = useState<Record<string, string>>({});
+  const locked = lock ? lock(draft) : null;
 
   // reopening always starts from what is currently stored, never from the last edit
   useEffect(() => {
@@ -54,20 +66,29 @@ export function EditSheet({
 
           <ScrollView style={styles.body} keyboardShouldPersistTaps="handled">
             <View style={styles.grid}>
-              {fields.map((f) => (
-                <View key={f.key} style={[styles.fieldWrap, f.half && styles.fieldHalf]}>
-                  <Text style={styles.label}>{f.label}</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={draft[f.key] ?? ''}
-                    onChangeText={(v) => setDraft((d) => ({ ...d, [f.key]: v }))}
-                    placeholder={f.placeholder}
-                    placeholderTextColor={text.faint}
-                    keyboardType={f.numeric ? 'numeric' : 'default'}
-                    autoFocus={f === fields[0]}
-                  />
-                </View>
-              ))}
+              {fields.map((f) => {
+                const isLocked = locked?.key === f.key;
+                const echo = f.echo ? f.echo(draft) : '';
+                return (
+                  <View key={f.key} style={[styles.fieldWrap, f.half && styles.fieldHalf]}>
+                    <Text style={styles.label}>
+                      {f.label}
+                      {isLocked ? <Text style={styles.calc}> · calculated</Text> : null}
+                    </Text>
+                    <TextInput
+                      style={[styles.input, isLocked && styles.inputLocked]}
+                      value={isLocked ? locked!.value : draft[f.key] ?? ''}
+                      onChangeText={(v) => setDraft((d) => ({ ...d, [f.key]: v }))}
+                      placeholder={f.placeholder}
+                      placeholderTextColor={text.faint}
+                      keyboardType={f.numeric ? 'numeric' : 'default'}
+                      editable={!isLocked}
+                      autoFocus={f === fields[0]}
+                    />
+                    {echo ? <Text style={styles.echo}>{echo}</Text> : null}
+                  </View>
+                );
+              })}
             </View>
           </ScrollView>
 
@@ -76,7 +97,7 @@ export function EditSheet({
               <Text style={styles.cancelText}>Cancel</Text>
             </Pressable>
             <Pressable
-              onPress={() => onSave(draft)}
+              onPress={() => onSave(locked ? { ...draft, [locked.key]: locked.value } : draft)}
               style={({ pressed }) => [styles.save, pressed && { opacity: 0.85 }]}
             >
               <Text style={styles.saveText}>Done</Text>
@@ -120,6 +141,11 @@ const styles = StyleSheet.create({
     padding: space.l,
     fontSize: font.title,
   },
+  // 7.27:1 on the field, against 10.99:1 for a live one — recessed, still
+  // readable. text.faint sits at 3.72:1 and fails for a number you have to read.
+  inputLocked: { color: text.muted },
+  calc: { color: text.faint, fontSize: font.micro, fontWeight: '400' },
+  echo: { color: text.faint, fontSize: font.micro, marginTop: space.xs },
   actions: { flexDirection: 'row', gap: space.m, marginTop: space.xl },
   cancel: {
     flex: 1,
