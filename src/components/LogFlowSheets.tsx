@@ -125,8 +125,8 @@ function OptionPill<T extends string | number>({
       </Pressable>
 
       <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
-        <Pressable style={styles.scrim} onPress={() => setOpen(false)}>
-          <Pressable style={styles.list} onPress={() => {}}>
+        <View style={styles.scrim}>
+          <View style={styles.list}>
             <Text style={styles.title}>{label}</Text>
             <ScrollView style={styles.listBody}>
               {options.map((o, i) => {
@@ -151,8 +151,14 @@ function OptionPill<T extends string | number>({
                 );
               })}
             </ScrollView>
-          </Pressable>
-        </Pressable>
+            <Pressable
+              onPress={() => setOpen(false)}
+              style={({ pressed }) => [styles.listClose, pressed && { opacity: 0.7 }]}
+            >
+              <Text style={styles.listCloseText}>Close</Text>
+            </Pressable>
+          </View>
+        </View>
       </Modal>
     </View>
   );
@@ -344,6 +350,15 @@ const styles = StyleSheet.create({
     padding: space.l,
   },
   listBody: { marginTop: space.m },
+  listClose: {
+    marginTop: space.m,
+    paddingVertical: space.l,
+    borderRadius: radius.m,
+    borderWidth: 1,
+    borderColor: surface.edge,
+    alignItems: 'center',
+  },
+  listCloseText: { color: text.muted, fontSize: font.body, fontWeight: '700' },
   option: { paddingVertical: space.l, paddingHorizontal: space.m, borderRadius: radius.s },
   optionOn: { backgroundColor: surface.field },
   optionText: { color: text.muted, fontSize: font.body },

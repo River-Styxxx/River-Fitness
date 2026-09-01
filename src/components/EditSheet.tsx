@@ -74,9 +74,14 @@ export function EditSheet({
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
-      <Pressable style={styles.scrim} onPress={onCancel}>
-        {/* swallow taps inside the sheet so they don't dismiss it */}
-        <Pressable style={styles.sheet} onPress={() => {}}>
+      {/*
+        The backdrop does not dismiss. Selecting text by dragging out past the
+        edge of the sheet releases the press outside it, which read as "tap the
+        backdrop" and threw away everything typed. Nothing closes this but Done
+        or Cancel — and, on Android, the hardware back button.
+      */}
+      <View style={styles.scrim}>
+        <View style={styles.sheet}>
           <Text style={styles.title}>{title}</Text>
           {hint ? <Text style={styles.hint}>{hint}</Text> : null}
 
@@ -154,8 +159,8 @@ export function EditSheet({
               <Text style={styles.saveText}>Done</Text>
             </Pressable>
           </View>
-        </Pressable>
-      </Pressable>
+        </View>
+      </View>
     </Modal>
   );
 }
