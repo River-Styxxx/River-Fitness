@@ -259,6 +259,55 @@ export async function updateEntry(
  * Remove a logged food. Soft delete, per the spec's one-way door — the row
  * stays, the views stop counting it, and it can be brought back.
  */
+/**
+ * Add one more food to a meal that is already logged.
+ *
+ * Takes the meal's own `meal_id` and `at`, so the new food joins that block in
+ * the day rather than starting a fresh meal at the current time. Forgetting the
+ * olive oil is the normal case, not an edge case.
+ */
+export async function addFoodToMeal(input: {
+  mealId: string;
+  at: string;
+  clientId: string;
+  tenantId: string;
+  description: string;
+  qty?: string | null;
+  weightG?: number | null;
+  enteredValue?: number | null;
+  enteredUnit?: string | null;
+  kcal?: number | null;
+  protein_g?: number | null;
+  carbs_g?: number | null;
+  fat_g?: number | null;
+  tier?: { id: number; pct: number } | null;
+}): Promise<string> {
+  const id = newId();
+  const row: TablesInsert<'food_log_entries'> = {
+    id,
+    meal_id: input.mealId,
+    at: input.at,
+    tenant_id: input.tenantId,
+    client_id: input.clientId,
+    description: input.description.trim(),
+    qty: input.qty?.trim() || null,
+    weight_g: input.weightG ?? null,
+    entered_value: input.enteredValue ?? null,
+    entered_unit: input.enteredUnit ?? null,
+    kcal: input.kcal ?? null,
+    protein_g: input.protein_g ?? null,
+    carbs_g: input.carbs_g ?? null,
+    fat_g: input.fat_g ?? null,
+    tier_id: input.tier?.id ?? null,
+    tier_pct: input.tier?.pct ?? null,
+    status: input.kcal != null ? 'estimated' : 'pending',
+    source: 'app',
+  };
+  const { error } = await supabase.from('food_log_entries').upsert([row], { onConflict: 'id' });
+  if (error) throw new Error(error.message);
+  return id;
+}
+
 export async function deleteEntry(id: string): Promise<void> {
   const { error } = await supabase
     .from('food_log_entries')

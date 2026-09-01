@@ -7,6 +7,7 @@ import {
   logMeal,
   updateEntry,
   deleteEntry,
+  addFoodToMeal,
   uploadMealPhotos,
   DailySummary,
   FoodLogEntry,
@@ -69,7 +70,19 @@ function todayLocal(tz: string): string {
  * The daily log. Rendered for a client viewing their own day, and for a coach
  * viewing their own — a coach is a client of their own practice.
  */
-export function TodayScreen({ client, tenantId }: { client: Client | null; tenantId: string | null }) {
+export function TodayScreen({
+  client,
+  tenantId,
+  readOnly = false,
+  date: dateOverride,
+}: {
+  client: Client | null;
+  tenantId: string | null;
+  /** coach view: the same day the client sees, without the place to log into it */
+  readOnly?: boolean;
+  /** pin the view to one day instead of today */
+  date?: string;
+}) {
   const [entries, setEntries] = useState<FoodLogEntry[] | null>(null);
   const [today, setToday] = useState<DailySummary | null>(null);
   const [target, setTarget] = useState<NutritionTarget | null>(null);
@@ -84,11 +97,12 @@ export function TodayScreen({ client, tenantId }: { client: Client | null; tenan
   const [pending, setPending] = useState<{ pct: number; id: number } | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [busyMeal, setBusyMeal] = useState<string | null>(null);
+  const [addingTo, setAddingTo] = useState<{ mealId: string; at: string } | null>(null);
   const [estimating, setEstimating] = useState(false);
   const [estimateNote, setEstimateNote] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
-  const date = client ? todayLocal(client.timezone) : '';
+  const date = dateOverride ?? (client ? todayLocal(client.timezone) : '');
 
   const load = useCallback(async () => {
     if (!client) return;
@@ -464,6 +478,74 @@ export function TodayScreen({ client, tenantId }: { client: Client | null; tenan
     }
   }
 
+  /** blank fields for the food being added into an existing meal */
+  const addFields = (): SheetField[] => [
+    { key: 'description', label: 'Food', value: '', placeholder: 'what was it?' },
+    { key: 'qty', label: 'How Much (words)', value: '', placeholder: '1 bowl, 2 scoops — no numbers needed' },
+    {
+      key: 'weight',
+      label: 'Weight',
+      value: '',
+      numeric: true,
+      echo: (d) => gramEcho(d.weight ?? '', unit),
+      units: UNITS_ENABLED
+        ? {
+            value: unit,
+            options: WEIGHT_UNITS.map((u) => ({ key: u.key, label: u.label })),
+            convert: (v, from, to) => convertDisplay(v, from as WeightUnit, to as WeightUnit),
+            onChange: (next) => setUnit(next as WeightUnit),
+          }
+        : undefined,
+    },
+    { key: 'kcal', label: 'Calories', value: '', numeric: true, half: true },
+    { key: 'protein', label: 'Protein (g)', value: '', numeric: true, half: true },
+    { key: 'carbs', label: 'Carbs (g)', value: '', numeric: true, half: true },
+    { key: 'fat', label: 'Fat (g)', value: '', numeric: true, half: true },
+  ];
+
+  async function saveAdded(v: Record<string, string>) {
+    const target = addingTo;
+    setAddingTo(null);
+    if (!target || !client || !tenantId) return;
+    if (!(v.description ?? '').trim()) return;
+    try {
+      const kcal = numOrNull(v.kcal ?? '');
+      const id = await addFoodToMeal({
+        mealId: target.mealId,
+        at: target.at,
+        clientId: client.id,
+        tenantId,
+        description: v.description ?? '',
+        qty: v.qty ?? null,
+        weightG: toGrams(v.weight ?? '', unit),
+        enteredValue: numOrNull(v.weight ?? ''),
+        enteredUnit: (v.weight ?? '').trim() ? unit : null,
+        kcal,
+        protein_g: numOrNull(v.protein ?? ''),
+        carbs_g: numOrNull(v.carbs ?? ''),
+        fat_g: numOrNull(v.fat ?? ''),
+      });
+      await load();
+      // no numbers given? the same estimate that runs on a fresh log runs here
+      if (kcal == null) {
+        await autoEstimate(
+          [id],
+          [
+            {
+              description: (v.description ?? '').trim(),
+              qty: (v.qty ?? '').trim() || undefined,
+              grams: toGrams(v.weight ?? '', unit),
+            },
+          ],
+          [],
+          null
+        );
+      }
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'could not add that');
+    }
+  }
+
   async function removeEntry() {
     if (!editing) return;
     const id = editing.id;
@@ -488,8 +570,15 @@ export function TodayScreen({ client, tenantId }: { client: Client | null; tenan
   const cTarget = target?.carbs_g ? Number(target.carbs_g) : null;
   const fTarget = target?.fat_g ? Number(target.fat_g) : null;
 
+  // read-only means this is embedded in the coach's client page, which already
+  // provides the scrolling column — a second Screen here would nest two
+  // ScrollViews and double the framing
+  const Shell = readOnly
+    ? ({ children }: { children: React.ReactNode }) => <View>{children}</View>
+    : Screen;
+
   return (
-    <Screen>
+    <Shell>
       <MacroMeter label="Calories" value={kcalNow} target={kcalTarget} unit="kcal" direction="ceiling" />
       <MacroMeter label="Protein" value={pNow} target={pTarget} unit="g" direction="floor" />
       <MacroMeter label="Carbs" value={cNow} target={cTarget} unit="g" direction="ceiling" />
@@ -513,6 +602,7 @@ export function TodayScreen({ client, tenantId }: { client: Client | null; tenan
         ) : null}
       </Card>
 
+      {readOnly ? null : (
       <Card style={{ marginTop: space.l }} domain="nutrition">
         <Row style={{ alignItems: 'baseline' }}>
           {/* heading must not wrap; the hint takes the remaining width */}
@@ -557,6 +647,7 @@ export function TodayScreen({ client, tenantId }: { client: Client | null; tenan
           fill it in later.
         </Small>
       </Card>
+      )}
 
       <H2 domain="nutrition">Today · {date}</H2>
       {entries === null ? (
@@ -567,17 +658,32 @@ export function TodayScreen({ client, tenantId }: { client: Client | null; tenan
         meals.map((m) => (
           <View key={m.key} style={styles.meal}>
             <View style={styles.mealHead}>
-              <Text style={styles.mealWhen}>
-                {m.at
-                  ? clock12(new Date(m.at).getHours() * 60 + new Date(m.at).getMinutes())
-                  : 'earlier'}
-                {m.rows.length > 1 ? ` · ${m.rows.length} foods` : ''}
-              </Text>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={styles.mealWhen}>
+                  {m.at
+                    ? clock12(new Date(m.at).getHours() * 60 + new Date(m.at).getMinutes())
+                    : 'earlier'}
+                </Text>
+                <Text style={styles.mealCount}>
+                  {m.rows.length} {m.rows.length === 1 ? 'food' : 'foods'}
+                </Text>
+              </View>
+
               <Text style={styles.mealTotal}>
                 {m.kcal > 0
                   ? `${Math.round(m.kcal).toLocaleString('en-US')} kcal · ${Math.round(m.protein)}g P`
                   : 'no numbers yet'}
               </Text>
+
+              {m.at ? (
+                <Pressable
+                  onPress={() => setAddingTo({ mealId: m.rows[0].meal_id ?? m.key, at: m.at! })}
+                  hitSlop={8}
+                  style={({ pressed }) => [styles.addToMeal, pressed && { opacity: 0.7 }]}
+                >
+                  <Text style={styles.addToMealGlyph}>+</Text>
+                </Pressable>
+              ) : null}
             </View>
 
             {m.needsNumbers ? (
@@ -625,6 +731,16 @@ export function TodayScreen({ client, tenantId }: { client: Client | null; tenan
       )}
 
       <EditSheet
+        visible={addingTo !== null}
+        title="Add A Food To This Meal"
+        hint="It lands in the same meal, at the same time. Leave the numbers blank and they get worked out."
+        fields={addFields()}
+        lock={macroLock}
+        onCancel={() => setAddingTo(null)}
+        onSave={saveAdded}
+      />
+
+      <EditSheet
         visible={editing !== null}
         title="Edit This Food"
         hint="Clear a number to take it back off the day. Any three macros fill in the fourth."
@@ -663,7 +779,7 @@ export function TodayScreen({ client, tenantId }: { client: Client | null; tenan
           void commit();
         }}
       />
-    </Screen>
+    </Shell>
   );
 }
 
@@ -679,16 +795,32 @@ const styles = StyleSheet.create({
   },
   mealHead: {
     flexDirection: 'row',
-    alignItems: 'baseline',
-    justifyContent: 'space-between',
+    alignItems: 'center',
     gap: space.m,
     paddingHorizontal: space.s,
-    paddingBottom: space.s,
-    marginBottom: space.s,
+    paddingTop: space.s,
+    paddingBottom: space.l,
+    marginBottom: space.m,
     borderBottomWidth: 1,
     borderBottomColor: surface.line,
   },
-  mealWhen: { color: text.muted, fontSize: font.micro, fontWeight: '700' },
+  mealWhen: { color: text.primary, fontSize: font.body, fontWeight: '700' },
+  mealCount: { color: text.faint, fontSize: font.micro, marginTop: space.xs },
+  addToMeal: {
+    width: 34,
+    height: 34,
+    borderRadius: radius.s,
+    borderWidth: 1,
+    borderColor: domainColor.nutrition,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  addToMealGlyph: {
+    color: domainColor.nutrition,
+    fontSize: font.title,
+    fontWeight: '700',
+    lineHeight: font.title + 2,
+  },
   fillIn: {
     borderWidth: 1,
     borderColor: domainColor.nutrition,
