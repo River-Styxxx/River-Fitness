@@ -169,14 +169,22 @@ export function MealComposer({
 
   const itemFields = (i: DraftItem): SheetField[] => [
     { key: 'description', label: 'Food', value: i.description, placeholder: 'what was it?' },
-    { key: 'qty', label: 'Amount', value: i.qty, placeholder: '1 bowl, 2 scoops' },
+    { key: 'qty', label: 'How Much (words)', value: i.qty, placeholder: '1 bowl, 2 scoops — no numbers needed' },
     {
       key: 'weight',
-      label: `Weight (${unitDef(unit).label})`,
+      label: 'Weight',
       value: i.weight,
       numeric: true,
       placeholder: 'on a scale, if you have one',
       echo: (d) => gramEcho(d.weight ?? '', unit),
+      units: UNITS_ENABLED
+        ? {
+            value: unit,
+            options: WEIGHT_UNITS.map((u) => ({ key: u.key, label: u.label })),
+            convert: (v, from, to) => convertDisplay(v, from as WeightUnit, to as WeightUnit),
+            onChange: (next) => onUnit(next as WeightUnit),
+          }
+        : undefined,
     },
     { key: 'kcal', label: 'Calories', value: i.kcal, numeric: true, half: true },
     { key: 'protein', label: 'Protein (g)', value: i.protein, numeric: true, half: true },
@@ -203,30 +211,7 @@ export function MealComposer({
 
   return (
     <View>
-      <View style={styles.headRow}>
-        <Text style={styles.section}>What Did You Eat?</Text>
-        {UNITS_ENABLED ? (
-          <View style={styles.seg}>
-            {WEIGHT_UNITS.map((u) => {
-              const on = u.key === unit;
-              return (
-                <Pressable
-                  key={u.key}
-                  onPress={() => {
-                    if (on) return;
-                    // convert through grams so nothing drifts on a toggle
-                    onItems(items.map((i) => ({ ...i, weight: convertDisplay(i.weight, unit, u.key) })));
-                    onUnit(u.key);
-                  }}
-                  style={[styles.segBtn, on && styles.segBtnOn]}
-                >
-                  <Text style={[styles.segText, on && styles.segTextOn]}>{u.label}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        ) : null}
-      </View>
+      <Text style={styles.section}>What Did You Eat?</Text>
 
       {items.map((item, idx) => (
         <Pressable

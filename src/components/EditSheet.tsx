@@ -12,6 +12,17 @@ export type SheetField = {
   half?: boolean;
   /** small line under the field — the gram echo on an oz input */
   echo?: (draft: Record<string, string>) => string;
+  /**
+   * a unit picker sitting on this field's label. Switching converts the value
+   * that is already typed, so the unit is chosen while looking at the number
+   * rather than before you have one.
+   */
+  units?: {
+    value: string;
+    options: { key: string; label: string }[];
+    convert: (value: string, from: string, to: string) => string;
+    onChange: (next: string) => void;
+  };
 };
 
 /**
@@ -76,10 +87,36 @@ export function EditSheet({
                 const echo = f.echo ? f.echo(draft) : '';
                 return (
                   <View key={f.key} style={[styles.fieldWrap, f.half && styles.fieldHalf]}>
-                    <Text style={styles.label}>
-                      {f.label}
-                      {isLocked ? <Text style={styles.calc}> · calculated</Text> : null}
-                    </Text>
+                    <View style={styles.labelRow}>
+                      <Text style={styles.label}>
+                        {f.label}
+                        {isLocked ? <Text style={styles.calc}> · calculated</Text> : null}
+                      </Text>
+                      {f.units ? (
+                        <View style={styles.seg}>
+                          {f.units.options.map((u) => {
+                            const on = u.key === f.units!.value;
+                            return (
+                              <Pressable
+                                key={u.key}
+                                onPress={() => {
+                                  if (on) return;
+                                  const from = f.units!.value;
+                                  setDraft((d) => ({
+                                    ...d,
+                                    [f.key]: f.units!.convert(d[f.key] ?? '', from, u.key),
+                                  }));
+                                  f.units!.onChange(u.key);
+                                }}
+                                style={[styles.segBtn, on && styles.segBtnOn]}
+                              >
+                                <Text style={[styles.segText, on && styles.segTextOn]}>{u.label}</Text>
+                              </Pressable>
+                            );
+                          })}
+                        </View>
+                      ) : null}
+                    </View>
                     <TextInput
                       style={[styles.input, isLocked && styles.inputLocked]}
                       value={isLocked ? locked!.value : draft[f.key] ?? ''}
@@ -147,7 +184,19 @@ const styles = StyleSheet.create({
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: space.m },
   fieldWrap: { width: '100%' },
   fieldHalf: { flexGrow: 1, flexBasis: '45%', minWidth: 0 },
-  label: { color: text.primary, fontSize: font.small, fontWeight: '700', marginBottom: space.s },
+  labelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: space.m,
+    marginBottom: space.s,
+  },
+  label: { color: text.primary, fontSize: font.small, fontWeight: '700' },
+  seg: { flexDirection: 'row', backgroundColor: surface.field, borderRadius: radius.s, overflow: 'hidden' },
+  segBtn: { paddingVertical: space.xs, paddingHorizontal: space.m },
+  segBtnOn: { backgroundColor: surface.line },
+  segText: { color: text.faint, fontSize: font.micro, fontWeight: '700' },
+  segTextOn: { color: text.primary },
   input: {
     backgroundColor: surface.field,
     color: text.primary,

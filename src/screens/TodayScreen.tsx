@@ -49,7 +49,17 @@ import {
   formatBand,
   SUGGESTION_GATE,
 } from '../lib/inaccuracy';
-import { WeightUnit, DEFAULT_UNIT, toGrams, fromGrams, gramEcho, unitDef } from '../lib/units';
+import {
+  WeightUnit,
+  DEFAULT_UNIT,
+  UNITS_ENABLED,
+  WEIGHT_UNITS,
+  toGrams,
+  fromGrams,
+  gramEcho,
+  unitDef,
+  convertDisplay,
+} from '../lib/units';
 
 function todayLocal(tz: string): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date());
@@ -73,6 +83,7 @@ export function TodayScreen({ client, tenantId }: { client: Client | null; tenan
   const [step, setStep] = useState<'idle' | 'warn' | 'stamp' | 'summary'>('idle');
   const [pending, setPending] = useState<{ pct: number; id: number } | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [busyMeal, setBusyMeal] = useState<string | null>(null);
   const [estimating, setEstimating] = useState(false);
   const [estimateNote, setEstimateNote] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -227,7 +238,17 @@ export function TodayScreen({ client, tenantId }: { client: Client | null; tenan
       });
       if (out.status !== 'ok' || out.items.length === 0) return;
 
-      const round = (v?: number) => (v == null ? null : Math.round(v));
+      // Only write what the model actually returned. Writing null for a macro
+      // it omitted silently blanks a field, and a null kcal demotes the row
+      // back to pending — which is exactly how a filled-in meal loses one line.
+      const filled = (i: (typeof out.items)[number]) => {
+        const patch: Record<string, number> = {};
+        if (i.kcal != null) patch.kcal = Math.round(i.kcal);
+        if (i.protein_g != null) patch.protein_g = Math.round(i.protein_g);
+        if (i.carbs_g != null) patch.carbs_g = Math.round(i.carbs_g);
+        if (i.fat_g != null) patch.fat_g = Math.round(i.fat_g);
+        return patch;
+      };
 
       if (entryIds.length === 1) {
         // one row: carry the whole estimate onto it, summed
@@ -235,23 +256,20 @@ export function TodayScreen({ client, tenantId }: { client: Client | null; tenan
           out.items.reduce((a, i) => a + (i[k] ?? 0), 0);
         await updateEntry(entryIds[0], {
           description: out.items.length === 1 ? out.items[0].description : described[0].description,
-          kcal: round(sum('kcal')),
-          protein_g: round(sum('protein_g')),
-          carbs_g: round(sum('carbs_g')),
-          fat_g: round(sum('fat_g')),
+          kcal: Math.round(sum('kcal')),
+          protein_g: Math.round(sum('protein_g')),
+          carbs_g: Math.round(sum('carbs_g')),
+          fat_g: Math.round(sum('fat_g')),
         });
       } else if (out.items.length === entryIds.length) {
-        await Promise.all(
-          entryIds.map((id, i) =>
-            updateEntry(id, {
-              description: out.items[i].description,
-              kcal: round(out.items[i].kcal),
-              protein_g: round(out.items[i].protein_g),
-              carbs_g: round(out.items[i].carbs_g),
-              fat_g: round(out.items[i].fat_g),
-            })
-          )
-        );
+        // one at a time, not Promise.all — a single failure should cost one row,
+        // not leave the rest of the meal in an unknown state
+        for (let i = 0; i < entryIds.length; i++) {
+          await updateEntry(entryIds[i], {
+            description: out.items[i].description,
+            ...filled(out.items[i]),
+          });
+        }
       } else {
         return; // ambiguous — leave it for a person
       }
@@ -335,17 +353,42 @@ export function TodayScreen({ client, tenantId }: { client: Client | null; tenan
       const rows = byMeal.get(key)!;
       const sum = (f: (e: FoodLogEntry) => number | null) =>
         rows.reduce((a, e) => a + (Number(f(e) ?? 0) || 0), 0);
-      const anyNumbers = rows.some((e) => e.kcal != null);
       return {
         key,
         rows,
         at: rows[0]?.at ?? null,
         kcal: sum((e) => e.kcal as number | null),
         protein: sum((e) => e.protein_g as number | null),
-        pending: !anyNumbers,
+        // one line short is still a meal with a hole in it
+        needsNumbers: rows.some((e) => e.kcal == null),
       };
     });
   })();
+
+  /**
+   * Fill in a meal that is already logged.
+   *
+   * The composer's Estimate button is gone the moment a meal is saved, so
+   * without this a row that came out pending had no route back to numbers
+   * short of typing them. Reads the foods off the rows themselves.
+   */
+  async function estimateLogged(rows: FoodLogEntry[]) {
+    setBusyMeal(rows[0]?.meal_id ?? rows[0]?.id ?? null);
+    try {
+      await autoEstimate(
+        rows.map((r) => r.id),
+        rows.map((r) => ({
+          description: r.description,
+          qty: r.qty ?? undefined,
+          grams: r.weight_g != null ? Number(r.weight_g) : null,
+        })),
+        [],
+        null
+      );
+    } finally {
+      setBusyMeal(null);
+    }
+  }
 
   const kcalNow = Number(today?.kcal ?? 0);
   const pNow = Number(today?.protein_g ?? 0);
@@ -364,13 +407,21 @@ export function TodayScreen({ client, tenantId }: { client: Client | null; tenan
     const shown = (v: number | null) => (v == null ? '' : String(Math.round(Number(v))));
     return [
       { key: 'description', label: 'Food', value: e.description, placeholder: 'what was it?' },
-      { key: 'qty', label: 'Amount', value: e.qty ?? '', placeholder: '1 bowl, 2 scoops' },
+      { key: 'qty', label: 'How Much (words)', value: e.qty ?? '', placeholder: '1 bowl, 2 scoops — no numbers needed' },
       {
         key: 'weight',
-        label: `Weight (${unitDef(unit).label})`,
+        label: 'Weight',
         value: e.weight_g != null ? fromGrams(Number(e.weight_g), unit) : '',
         numeric: true,
         echo: (d) => gramEcho(d.weight ?? '', unit),
+        units: UNITS_ENABLED
+          ? {
+              value: unit,
+              options: WEIGHT_UNITS.map((u) => ({ key: u.key, label: u.label })),
+              convert: (v, from, to) => convertDisplay(v, from as WeightUnit, to as WeightUnit),
+              onChange: (next) => setUnit(next as WeightUnit),
+            }
+          : undefined,
       },
       { key: 'kcal', label: 'Calories', value: shown(e.kcal as number | null), numeric: true, half: true },
       { key: 'protein', label: 'Protein (g)', value: shown(e.protein_g as number | null), numeric: true, half: true },
@@ -523,11 +574,23 @@ export function TodayScreen({ client, tenantId }: { client: Client | null; tenan
                 {m.rows.length > 1 ? ` · ${m.rows.length} foods` : ''}
               </Text>
               <Text style={styles.mealTotal}>
-                {m.pending
-                  ? 'pending'
-                  : `${Math.round(m.kcal).toLocaleString('en-US')} kcal · ${Math.round(m.protein)}g P`}
+                {m.kcal > 0
+                  ? `${Math.round(m.kcal).toLocaleString('en-US')} kcal · ${Math.round(m.protein)}g P`
+                  : 'no numbers yet'}
               </Text>
             </View>
+
+            {m.needsNumbers ? (
+              <Pressable
+                onPress={() => estimateLogged(m.rows)}
+                disabled={busyMeal === m.key}
+                style={({ pressed }) => [styles.fillIn, pressed && { opacity: 0.8 }]}
+              >
+                <Text style={styles.fillInText}>
+                  {busyMeal === m.key ? 'Working out the numbers…' : 'Estimate the missing numbers'}
+                </Text>
+              </Pressable>
+            ) : null}
 
             {m.rows.map((e) => (
               <Pressable
@@ -626,6 +689,15 @@ const styles = StyleSheet.create({
     borderBottomColor: surface.line,
   },
   mealWhen: { color: text.muted, fontSize: font.micro, fontWeight: '700' },
+  fillIn: {
+    borderWidth: 1,
+    borderColor: domainColor.nutrition,
+    borderRadius: radius.s,
+    paddingVertical: space.s,
+    alignItems: 'center',
+    marginBottom: space.s,
+  },
+  fillInText: { color: domainColor.nutrition, fontSize: font.micro, fontWeight: '700' },
   mealTotal: { color: text.secondary, fontSize: font.small, fontWeight: '700' },
   entry: {
     flexDirection: 'row',
