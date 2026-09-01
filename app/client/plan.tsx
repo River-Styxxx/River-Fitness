@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useSession } from '../_layout';
 import { getTargets, getInstructions, getPublishedReports, NutritionTarget, StandingInstruction, ClientReport, signOut } from '../../src/data';
 import { Screen, Card, H2, Body, Small, Row, StatTile, Button, Loading } from '../../src/components/ui';
@@ -11,17 +11,23 @@ export default function Plan() {
   const [instructions, setInstructions] = useState<StandingInstruction[] | null>(null);
   const [reports, setReports] = useState<ClientReport[] | null>(null);
 
-  useEffect(() => {
+  const load = useCallback(async () => {
     if (!client) return;
-    getTargets(client.id).then(setTargets).catch(() => setTargets([]));
-    getInstructions(client.id).then(setInstructions).catch(() => setInstructions([]));
-    getPublishedReports(client.id).then(setReports).catch(() => setReports([]));
+    await Promise.all([
+      getTargets(client.id).then(setTargets).catch(() => setTargets([])),
+      getInstructions(client.id).then(setInstructions).catch(() => setInstructions([])),
+      getPublishedReports(client.id).then(setReports).catch(() => setReports([])),
+    ]);
   }, [client]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   if (!client || targets === null || instructions === null || reports === null) return <Loading />;
 
   return (
-    <Screen>
+    <Screen onRefresh={load}>
       <H2 domain="nutrition">Targets</H2>
       {targets.map((t) => (
         <Card key={t.id} domain="nutrition">

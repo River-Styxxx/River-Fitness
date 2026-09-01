@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { View } from 'react-native';
 import { useSession } from '../_layout';
 import { getWeekSummaries, getDailySummaries, WeekSummary, DailySummary } from '../../src/data';
@@ -11,11 +11,17 @@ export default function Weeks() {
   const [weeks, setWeeks] = useState<WeekSummary[] | null>(null);
   const [days, setDays] = useState<DailySummary[] | null>(null);
 
-  useEffect(() => {
+  const load = useCallback(async () => {
     if (!client) return;
-    getWeekSummaries(client.id).then(setWeeks).catch(() => setWeeks([]));
-    getDailySummaries(client.id, 120).then(setDays).catch(() => setDays([]));
+    await Promise.all([
+      getWeekSummaries(client.id).then(setWeeks).catch(() => setWeeks([])),
+      getDailySummaries(client.id, 120).then(setDays).catch(() => setDays([])),
+    ]);
   }, [client]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   if (!client || weeks === null || days === null) return <Loading />;
 
@@ -31,7 +37,7 @@ export default function Weeks() {
   }
 
   return (
-    <Screen>
+    <Screen onRefresh={load}>
       <Card domain="nutrition">
         <H2 domain="nutrition">Your log, growing</H2>
         <Phyllotaxis days={seeds} />

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Text, Pressable, StyleSheet, View } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import {
@@ -37,20 +37,26 @@ export default function ClientDetail() {
   const [instructions, setInstructions] = useState<StandingInstruction[] | null>(null);
   const [day, setDay] = useState<string | null>(null);
 
-  useEffect(() => {
+  const load = useCallback(async () => {
     if (!clientId) return;
-    getClient(clientId).then(setClient).catch(() => setClient(null));
-    getWeekSummaries(clientId).then(setWeeks).catch(() => setWeeks([]));
-    getTargets(clientId).then(setTargets).catch(() => setTargets([]));
-    getInstructions(clientId).then(setInstructions).catch(() => setInstructions([]));
-    getDailySummaries(clientId, 14)
-      .then((d) => {
-        setDays(d);
-        // open on the most recent day that actually has something in it
-        setDay((prev) => prev ?? d[0]?.local_date ?? null);
-      })
-      .catch(() => setDays([]));
+    await Promise.all([
+      getClient(clientId).then(setClient).catch(() => setClient(null)),
+      getWeekSummaries(clientId).then(setWeeks).catch(() => setWeeks([])),
+      getTargets(clientId).then(setTargets).catch(() => setTargets([])),
+      getInstructions(clientId).then(setInstructions).catch(() => setInstructions([])),
+      getDailySummaries(clientId, 14)
+        .then((d) => {
+          setDays(d);
+          // open on the most recent day that actually has something in it
+          setDay((prev) => prev ?? d[0]?.local_date ?? null);
+        })
+        .catch(() => setDays([])),
+    ]);
   }, [clientId]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   if (!client || weeks === null || days === null || targets === null || instructions === null) {
     return <Loading />;
@@ -59,7 +65,7 @@ export default function ClientDetail() {
   const pFloor = targets.find((t) => t.protein_g != null)?.protein_g;
 
   return (
-    <Screen>
+    <Screen onRefresh={load}>
       <H1>{client.display_name}</H1>
 
       <H2 domain="nutrition">Their day</H2>

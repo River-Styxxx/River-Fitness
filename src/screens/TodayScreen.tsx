@@ -574,11 +574,15 @@ export function TodayScreen({
   // provides the scrolling column — a second Screen here would nest two
   // ScrollViews and double the framing
   const Shell = readOnly
-    ? ({ children }: { children: React.ReactNode }) => <View>{children}</View>
+    ? ({ children }: { children: React.ReactNode; onRefresh?: () => void | Promise<void> }) => (
+        <View>{children}</View>
+      )
     : Screen;
+  // embedded in the coach page, the outer screen owns the pull gesture
+  const shellProps = readOnly ? {} : { onRefresh: load };
 
   return (
-    <Shell>
+    <Shell {...shellProps}>
       <MacroMeter label="Calories" value={kcalNow} target={kcalTarget} unit="kcal" direction="ceiling" />
       <MacroMeter label="Protein" value={pNow} target={pTarget} unit="g" direction="floor" />
       <MacroMeter label="Carbs" value={cNow} target={cTarget} unit="g" direction="ceiling" />

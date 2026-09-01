@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Pressable, View, Text, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { listClients, getLatestDailyAcrossClients, Client, DailySummary, signOut } from '../../src/data';
@@ -15,23 +15,29 @@ export default function CoachHome() {
   const [clients, setClients] = useState<Client[] | null>(null);
   const [latest, setLatest] = useState<Map<string, DailySummary> | null>(null);
 
-  useEffect(() => {
-    listClients().then(setClients).catch(() => setClients([]));
-    getLatestDailyAcrossClients()
-      .then((rows) => {
-        const m = new Map<string, DailySummary>();
-        for (const r of rows) {
-          if (r.client_id && !m.has(r.client_id)) m.set(r.client_id, r); // rows come newest-first
-        }
-        setLatest(m);
-      })
-      .catch(() => setLatest(new Map()));
+  const load = useCallback(async () => {
+    await Promise.all([
+      listClients().then(setClients).catch(() => setClients([])),
+      getLatestDailyAcrossClients()
+        .then((rows) => {
+          const m = new Map<string, DailySummary>();
+          for (const r of rows) {
+            if (r.client_id && !m.has(r.client_id)) m.set(r.client_id, r); // rows come newest-first
+          }
+          setLatest(m);
+        })
+        .catch(() => setLatest(new Map())),
+    ]);
   }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   if (clients === null || latest === null) return <Loading />;
 
   return (
-    <Screen>
+    <Screen onRefresh={load}>
       <H1>Clients</H1>
       {clients.map((c) => {
         const last = latest.get(c.id);

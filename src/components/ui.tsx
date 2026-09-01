@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,8 @@ import {
   ViewStyle,
   ScrollView,
   ActivityIndicator,
+  RefreshControl,
+  Platform,
   useWindowDimensions,
 } from 'react-native';
 import { surface, text, space, font, radius, layout, signal, Domain, domainColor } from '../theme';
@@ -22,11 +24,14 @@ export function Screen({
   scroll = true,
   left,
   right,
+  onRefresh,
 }: {
   children: React.ReactNode;
   scroll?: boolean;
   left?: React.ReactNode;
   right?: React.ReactNode;
+  /** pull down from the top to run this — usually the screen's own load() */
+  onRefresh?: () => void | Promise<void>;
 }) {
   const { width } = useWindowDimensions();
   // phones and small tablets: full bleed. anything wider: the phone-width column.
@@ -47,10 +52,119 @@ export function Screen({
   );
 
   if (!scroll) return <View style={[styles.screen, styles.centred]}>{body}</View>;
+
+  if (!onRefresh) {
+    return (
+      <ScrollView style={styles.screen} contentContainerStyle={styles.scrollContent}>
+        {body}
+      </ScrollView>
+    );
+  }
+
+  return <RefreshableScreen onRefresh={onRefresh}>{body}</RefreshableScreen>;
+}
+
+const PULL_TRIGGER = 64; // px of pull before it counts as "refresh"
+const PULL_MAX = 96;
+const PULL_RESIST = 0.5; // drag feels weighted rather than 1:1
+
+/**
+ * Pull-to-refresh.
+ *
+ * Native gets RefreshControl. The web build cannot: react-native-web ships
+ * RefreshControl as an inert component, and a browser's own pull-to-refresh is
+ * unavailable inside an installed PWA and reloads the whole page in a tab —
+ * throwing away the session rather than re-reading the data. So on web the
+ * gesture is tracked directly: only once the list is already at the top, with
+ * resistance applied so a scroll that happens to start at zero does not trip it.
+ */
+function RefreshableScreen({
+  children,
+  onRefresh,
+}: {
+  children: React.ReactNode;
+  onRefresh: () => void | Promise<void>;
+}) {
+  const [refreshing, setRefreshing] = useState(false);
+  const [pull, setPull] = useState(0);
+  const atTop = useRef(true);
+  const startY = useRef<number | null>(null);
+
+  const run = useCallback(async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await onRefresh();
+    } finally {
+      setRefreshing(false);
+      setPull(0);
+    }
+  }, [onRefresh, refreshing]);
+
+  if (Platform.OS !== 'web') {
+    return (
+      <ScrollView
+        style={styles.screen}
+        contentContainerStyle={styles.scrollContent}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={run}
+            tintColor={text.primary}
+            colors={[text.primary]}
+            progressBackgroundColor={surface.card}
+          />
+        }
+      >
+        {children}
+      </ScrollView>
+    );
+  }
+
+  const armed = pull >= PULL_TRIGGER;
+
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.scrollContent}>
-      {body}
-    </ScrollView>
+    <View style={styles.screen}>
+      {pull > 0 || refreshing ? (
+        <View style={[styles.pullBar, { height: refreshing ? 34 : pull }]}>
+          {refreshing ? (
+            <ActivityIndicator color={text.primary} />
+          ) : (
+            <Text style={[styles.pullText, armed && { color: text.primary }]}>
+              {armed ? 'Release to refresh' : 'Pull to refresh'}
+            </Text>
+          )}
+        </View>
+      ) : null}
+
+      <ScrollView
+        style={styles.screen}
+        contentContainerStyle={styles.scrollContent}
+        scrollEventThrottle={16}
+        onScroll={(e) => {
+          atTop.current = e.nativeEvent.contentOffset.y <= 0;
+        }}
+        onTouchStart={(e) => {
+          startY.current = atTop.current ? e.nativeEvent.pageY : null;
+        }}
+        onTouchMove={(e) => {
+          if (startY.current == null || refreshing) return;
+          const d = (e.nativeEvent.pageY - startY.current) * PULL_RESIST;
+          setPull(d > 0 ? Math.min(d, PULL_MAX) : 0);
+        }}
+        onTouchEnd={() => {
+          startY.current = null;
+          if (pull >= PULL_TRIGGER) void run();
+          else setPull(0);
+        }}
+        onTouchCancel={() => {
+          startY.current = null;
+          setPull(0);
+        }}
+      >
+        {children}
+      </ScrollView>
+    </View>
   );
 }
 
@@ -181,6 +295,13 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: surface.bg },
   centred: { alignItems: 'center' },
   scrollContent: { alignItems: 'center', minHeight: '100%' },
+  pullBar: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+    backgroundColor: surface.bg,
+  },
+  pullText: { color: text.faint, fontSize: font.micro, fontWeight: '700' },
   shell: { width: '100%', flexDirection: 'row', gap: layout.gutter, alignSelf: 'center', flexGrow: 1 },
   rail: { width: layout.rail },
   // the reading column itself is near-black; pale blue is only the margins
