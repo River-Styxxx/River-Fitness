@@ -268,11 +268,15 @@ export function MacroBreakdown({
   kcal,
   swatches,
 }: {
-  macros: { protein: number; carbs: number; fat: number };
+  macros: { protein: number; carbs: number; fat: number; fiber?: number | null };
   kcal: number;
   swatches?: boolean;
 }) {
   const { slices, kcalOf } = macroSlices(macros);
+  // net carbs = carbs - fibre. Shown only where fibre is actually known:
+  // null means nobody reported it, which is not the same as zero.
+  const fiber = macros.fiber;
+  const net = fiber != null && fiber > 0 ? Math.max(0, macros.carbs - fiber) : null;
   return (
     <View>
       {slices.map((s) => (
@@ -283,7 +287,12 @@ export function MacroBreakdown({
             ) : null}
             <Text style={styles.macroName}>{s.label}</Text>
           </View>
-          <Text style={styles.macroG}>{Math.round(macros[s.key as MacroKeyName])}g</Text>
+          <Text style={styles.macroG}>
+            {Math.round(macros[s.key as MacroKeyName])}g
+            {s.key === 'carbs' && net != null ? (
+              <Text style={styles.netCarb}> ({Math.round(net)}g net)</Text>
+            ) : null}
+          </Text>
           <Text style={styles.macroKcal}>{Math.round(kcalOf[s.key as MacroKeyName])} kcal</Text>
           <Text style={styles.macroPct}>({kcal ? Math.round(s.pct) : 0}% of kcal)</Text>
         </View>
@@ -415,7 +424,8 @@ const styles = StyleSheet.create({
   macroNameCell: { flexDirection: 'row', alignItems: 'center', gap: space.s, width: 88 },
   swatch: { width: 8, height: 8, borderRadius: 2 },
   macroName: { color: text.muted, fontSize: font.small },
-  macroG: { color: text.primary, fontSize: font.small, width: 44, textAlign: 'right' },
+  macroG: { color: text.primary, fontSize: font.small, width: 108, textAlign: 'right' },
+  netCarb: { color: text.muted, fontSize: font.micro, fontWeight: '400' },
   macroKcal: { color: text.primary, fontSize: font.small, width: 68, textAlign: 'right' },
   macroPct: { color: text.muted, fontSize: font.small, flex: 1, textAlign: 'right' },
 

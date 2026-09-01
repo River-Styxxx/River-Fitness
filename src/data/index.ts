@@ -143,6 +143,7 @@ export type MealItemInput = {
   protein_g?: number;
   carbs_g?: number;
   fat_g?: number;
+  fiber_g?: number;
   foodItemId?: string;
 };
 
@@ -162,7 +163,7 @@ export async function logMeal(input: {
   clientId: string;
   tenantId: string;
   items: MealItemInput[];
-  mealMacros?: { kcal?: number; protein_g?: number; carbs_g?: number; fat_g?: number };
+  mealMacros?: { kcal?: number; protein_g?: number; carbs_g?: number; fat_g?: number; fiber_g?: number };
   /** ISO instant for the meal; omitted means now. local_date follows from it. */
   at?: string | null;
   /** which inaccuracy tier fired and what the client was shown */
@@ -181,7 +182,13 @@ export async function logMeal(input: {
     const macros =
       !anyPerItem && idx === 0 && input.mealMacros
         ? input.mealMacros
-        : { kcal: item.kcal, protein_g: item.protein_g, carbs_g: item.carbs_g, fat_g: item.fat_g };
+        : {
+            kcal: item.kcal,
+            protein_g: item.protein_g,
+            carbs_g: item.carbs_g,
+            fat_g: item.fat_g,
+            fiber_g: item.fiber_g,
+          };
 
     return {
       id: newId(),
@@ -194,6 +201,7 @@ export async function logMeal(input: {
       protein_g: macros.protein_g ?? null,
       carbs_g: macros.carbs_g ?? null,
       fat_g: macros.fat_g ?? null,
+      fiber_g: (macros as { fiber_g?: number }).fiber_g ?? null,
       food_item_id: item.foodItemId ?? null,
       weight_g: item.weightG ?? null,
       entered_value: item.enteredValue ?? null,
@@ -234,6 +242,7 @@ export async function updateEntry(
     protein_g?: number | null;
     carbs_g?: number | null;
     fat_g?: number | null;
+    fiber_g?: number | null;
   }
 ): Promise<void> {
   const row: TablesUpdate<'food_log_entries'> = {};
@@ -249,6 +258,7 @@ export async function updateEntry(
   if (patch.protein_g !== undefined) row.protein_g = patch.protein_g;
   if (patch.carbs_g !== undefined) row.carbs_g = patch.carbs_g;
   if (patch.fat_g !== undefined) row.fat_g = patch.fat_g;
+  if (patch.fiber_g !== undefined) row.fiber_g = patch.fiber_g;
   if (Object.keys(row).length === 0) return;
 
   const { error } = await supabase.from('food_log_entries').update(row).eq('id', id);
@@ -280,6 +290,7 @@ export async function addFoodToMeal(input: {
   protein_g?: number | null;
   carbs_g?: number | null;
   fat_g?: number | null;
+  fiber_g?: number | null;
   tier?: { id: number; pct: number } | null;
 }): Promise<string> {
   const id = newId();
@@ -298,6 +309,7 @@ export async function addFoodToMeal(input: {
     protein_g: input.protein_g ?? null,
     carbs_g: input.carbs_g ?? null,
     fat_g: input.fat_g ?? null,
+    fiber_g: input.fiber_g ?? null,
     tier_id: input.tier?.id ?? null,
     tier_pct: input.tier?.pct ?? null,
     status: input.kcal != null ? 'estimated' : 'pending',

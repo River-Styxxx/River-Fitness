@@ -23,6 +23,8 @@ export type EstimatedItem = {
   protein_g?: number;
   carbs_g?: number;
   fat_g?: number;
+  /** grams of fibre inside carbs_g — net carbs are carbs minus this */
+  fiber_g?: number;
 };
 
 export type EstimateOutcome =

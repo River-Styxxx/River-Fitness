@@ -261,12 +261,13 @@ export function TodayScreen({
         if (i.protein_g != null) patch.protein_g = Math.round(i.protein_g);
         if (i.carbs_g != null) patch.carbs_g = Math.round(i.carbs_g);
         if (i.fat_g != null) patch.fat_g = Math.round(i.fat_g);
+        if (i.fiber_g != null) patch.fiber_g = Math.round(i.fiber_g);
         return patch;
       };
 
       if (entryIds.length === 1) {
         // one row: carry the whole estimate onto it, summed
-        const sum = (k: 'kcal' | 'protein_g' | 'carbs_g' | 'fat_g') =>
+        const sum = (k: 'kcal' | 'protein_g' | 'carbs_g' | 'fat_g' | 'fiber_g') =>
           out.items.reduce((a, i) => a + (i[k] ?? 0), 0);
         await updateEntry(entryIds[0], {
           description: out.items.length === 1 ? out.items[0].description : described[0].description,
@@ -274,6 +275,7 @@ export function TodayScreen({
           protein_g: Math.round(sum('protein_g')),
           carbs_g: Math.round(sum('carbs_g')),
           fat_g: Math.round(sum('fat_g')),
+          fiber_g: out.items.some((i) => i.fiber_g != null) ? Math.round(sum('fiber_g')) : null,
         });
       } else if (out.items.length === entryIds.length) {
         // one at a time, not Promise.all — a single failure should cost one row,
@@ -373,6 +375,9 @@ export function TodayScreen({
         at: rows[0]?.at ?? null,
         kcal: sum((e) => e.kcal as number | null),
         protein: sum((e) => e.protein_g as number | null),
+        carbs: sum((e) => e.carbs_g as number | null),
+        // null when no row in the meal reported fibre — not the same as zero
+        fiber: rows.some((e) => e.fiber_g != null) ? sum((e) => e.fiber_g as number | null) : null,
         // one line short is still a meal with a hole in it
         needsNumbers: rows.some((e) => e.kcal == null),
       };
@@ -408,6 +413,7 @@ export function TodayScreen({
   const pNow = Number(today?.protein_g ?? 0);
   const cNow = Number(today?.carbs_g ?? 0);
   const fNow = Number(today?.fat_g ?? 0);
+  const fiberNow = today?.fiber_g != null ? Number(today.fiber_g) : null;
   const editing = (entries ?? []).find((e) => e.id === editingId) ?? null;
 
   const numOrNull = (v: string): number | null => {
@@ -594,7 +600,11 @@ export function TodayScreen({
       <Card style={{ marginTop: space.l }} domain="nutrition">
         <H2>Day So Far</H2>
         <Text style={styles.dayKcal}>{Math.round(kcalNow).toLocaleString('en-US')} kcal</Text>
-        <MacroBreakdown macros={{ protein: pNow, carbs: cNow, fat: fNow }} kcal={kcalNow} swatches />
+        <MacroBreakdown
+          macros={{ protein: pNow, carbs: cNow, fat: fNow, fiber: fiberNow }}
+          kcal={kcalNow}
+          swatches
+        />
         {dayBand.kcal > 0 ? (
           <View style={styles.dayBand}>
             <Text style={styles.dayBandHead}>{formatBand(dayBand.kcal, dayBand.pct)}</Text>
@@ -673,11 +683,21 @@ export function TodayScreen({
                 </Text>
               </View>
 
-              <Text style={styles.mealTotal}>
-                {m.kcal > 0
-                  ? `${Math.round(m.kcal).toLocaleString('en-US')} kcal · ${Math.round(m.protein)}g P`
-                  : 'no numbers yet'}
-              </Text>
+              <View style={{ alignItems: 'flex-end' }}>
+                <Text style={styles.mealTotal}>
+                  {m.kcal > 0
+                    ? `${Math.round(m.kcal).toLocaleString('en-US')} kcal · ${Math.round(m.protein)}g P`
+                    : 'no numbers yet'}
+                </Text>
+                {m.kcal > 0 ? (
+                  <Text style={styles.mealCarbs}>
+                    {Math.round(m.carbs)}g C
+                    {m.fiber != null && m.fiber > 0
+                      ? ` (${Math.round(Math.max(0, m.carbs - m.fiber))}g net)`
+                      : ''}
+                  </Text>
+                ) : null}
+              </View>
 
               {m.at ? (
                 <Pressable
@@ -810,6 +830,7 @@ const styles = StyleSheet.create({
   },
   mealWhen: { color: text.primary, fontSize: font.body, fontWeight: '700' },
   mealCount: { color: text.faint, fontSize: font.micro, marginTop: space.xs },
+  mealCarbs: { color: text.muted, fontSize: font.micro, marginTop: space.xs },
   addToMeal: {
     width: 34,
     height: 34,

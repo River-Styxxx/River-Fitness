@@ -63,9 +63,9 @@ export type Database = {
         Relationships: []
       }
       food_log_entries: {
-        Row: { at: string; carbs_g: number | null; client_id: string; created_at: string; deleted_at: string | null; description: string; entered_unit: string | null; entered_value: number | null; fat_g: number | null; food_item_id: string | null; id: string; kcal: number | null; local_date: string | null; meal_id: string | null; protein_g: number | null; qty: string | null; source: string; status: string; tenant_id: string; tier_id: number | null; tier_pct: number | null; weight_g: number | null }
-        Insert: { at?: string; carbs_g?: number | null; client_id: string; created_at?: string; deleted_at?: string | null; description: string; entered_unit?: string | null; entered_value?: number | null; fat_g?: number | null; food_item_id?: string | null; id: string; kcal?: number | null; local_date?: string | null; meal_id?: string | null; protein_g?: number | null; qty?: string | null; source: string; status?: string; tenant_id: string; tier_id?: number | null; tier_pct?: number | null; weight_g?: number | null }
-        Update: { at?: string; carbs_g?: number | null; client_id?: string; created_at?: string; deleted_at?: string | null; description?: string; entered_unit?: string | null; entered_value?: number | null; fat_g?: number | null; food_item_id?: string | null; id?: string; kcal?: number | null; local_date?: string | null; meal_id?: string | null; protein_g?: number | null; qty?: string | null; source?: string; status?: string; tenant_id?: string; tier_id?: number | null; tier_pct?: number | null; weight_g?: number | null }
+        Row: { at: string; carbs_g: number | null; fiber_g: number | null; client_id: string; created_at: string; deleted_at: string | null; description: string; entered_unit: string | null; entered_value: number | null; fat_g: number | null; food_item_id: string | null; id: string; kcal: number | null; local_date: string | null; meal_id: string | null; protein_g: number | null; qty: string | null; source: string; status: string; tenant_id: string; tier_id: number | null; tier_pct: number | null; weight_g: number | null }
+        Insert: { at?: string; carbs_g?: number | null; fiber_g?: number | null; client_id: string; created_at?: string; deleted_at?: string | null; description: string; entered_unit?: string | null; entered_value?: number | null; fat_g?: number | null; food_item_id?: string | null; id: string; kcal?: number | null; local_date?: string | null; meal_id?: string | null; protein_g?: number | null; qty?: string | null; source: string; status?: string; tenant_id: string; tier_id?: number | null; tier_pct?: number | null; weight_g?: number | null }
+        Update: { at?: string; carbs_g?: number | null; fiber_g?: number | null; client_id?: string; created_at?: string; deleted_at?: string | null; description?: string; entered_unit?: string | null; entered_value?: number | null; fat_g?: number | null; food_item_id?: string | null; id?: string; kcal?: number | null; local_date?: string | null; meal_id?: string | null; protein_g?: number | null; qty?: string | null; source?: string; status?: string; tenant_id?: string; tier_id?: number | null; tier_pct?: number | null; weight_g?: number | null }
         Relationships: []
       }
       messages: {
@@ -115,7 +115,7 @@ export type Database = {
     }
     Views: {
       v_daily_summary: {
-        Row: { carbs_g: number | null; client_id: string | null; entries: number | null; fat_g: number | null; kcal: number | null; local_date: string | null; protein_g: number | null; protein_g_per_100kcal: number | null; tenant_id: string | null }
+        Row: { fiber_g: number | null; carbs_g: number | null; client_id: string | null; entries: number | null; fat_g: number | null; kcal: number | null; local_date: string | null; protein_g: number | null; protein_g_per_100kcal: number | null; tenant_id: string | null }
         Relationships: []
       }
       v_food_rollup: {
