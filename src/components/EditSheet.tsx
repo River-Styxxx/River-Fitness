@@ -51,6 +51,8 @@ export function EditSheet({
   onSave,
   onDelete,
   deleteLabel,
+  footer,
+  footerTitle,
 }: {
   visible: boolean;
   title: string;
@@ -62,6 +64,14 @@ export function EditSheet({
   /** shown only when editing something that already exists */
   onDelete?: () => void;
   deleteLabel?: string;
+  /**
+   * Anything that isn't a text field — the photo slots live here. It scrolls
+   * with the fields rather than sitting under them, because on a phone the
+   * keyboard is already eating half the sheet and a pinned block would be the
+   * half you can't see.
+   */
+  footer?: React.ReactNode;
+  footerTitle?: string;
 }) {
   const [draft, setDraft] = useState<Record<string, string>>({});
   const locked = lock ? lock(draft) : null;
@@ -144,6 +154,12 @@ export function EditSheet({
                 );
               })}
             </View>
+            {footer ? (
+              <View style={styles.footer}>
+                {footerTitle ? <Text style={styles.footerTitle}>{footerTitle}</Text> : null}
+                {footer}
+              </View>
+            ) : null}
           </ScrollView>
 
           {onDelete ? (
@@ -221,6 +237,8 @@ const styles = StyleSheet.create({
   inputLocked: { color: text.muted },
   calc: { color: text.faint, fontSize: font.micro, fontWeight: '400' },
   echo: { color: text.faint, fontSize: font.micro, marginTop: space.xs },
+  footer: { marginTop: space.l, borderTopWidth: 1, borderTopColor: surface.line, paddingTop: space.l },
+  footerTitle: { color: text.primary, fontSize: font.body, fontWeight: '700', marginBottom: space.m },
   destroy: { marginTop: space.l, paddingVertical: space.m, alignItems: 'center' },
   destroyText: { color: signal.error, fontSize: font.small, fontWeight: '700' },
   actions: { flexDirection: 'row', gap: space.m, marginTop: space.l },

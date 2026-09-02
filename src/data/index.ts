@@ -412,6 +412,61 @@ export async function uploadMealPhotos(input: {
   return { uploaded, failed };
 }
 
+/**
+ * Photos of one food, rather than of the plate it sat on.
+ *
+ * Same bucket, same three slots, same attachments table — only the owner
+ * changes. The path keeps the client folder first because that is what the
+ * storage policy checks, and `entry/` under it keeps a single food's shots from
+ * colliding with the meal's own set.
+ */
+export async function uploadEntryPhotos(input: {
+  clientId: string;
+  tenantId: string;
+  entryId: string;
+  photos: MealPhotoUpload[];
+}): Promise<{ uploaded: number; failed: string[] }> {
+  const failed: string[] = [];
+  let uploaded = 0;
+
+  for (const photo of input.photos) {
+    const path = `${input.clientId}/entry/${input.entryId}/${photo.kind}.jpg`;
+    const { error: upErr } = await supabase.storage
+      .from('meal-photos')
+      .upload(path, photo.blob, { contentType: 'image/jpeg', upsert: true });
+
+    if (upErr) {
+      failed.push(`${photo.kind}: ${upErr.message}`);
+      continue;
+    }
+
+    const row: TablesInsert<'attachments'> = {
+      tenant_id: input.tenantId,
+      entity_type: 'food_log_entry',
+      entity_id: input.entryId,
+      storage_path: path,
+      kind: photo.kind === 'label' ? 'nutrition_label' : `meal_${photo.kind}`,
+    };
+    const { error: rowErr } = await supabase.from('attachments').insert(row);
+    if (rowErr) failed.push(`${photo.kind} record: ${rowErr.message}`);
+    else uploaded++;
+  }
+
+  return { uploaded, failed };
+}
+
+/** Attachments hanging off individual foods. */
+export async function getEntryAttachments(entryIds: string[]): Promise<Tables<'attachments'>[]> {
+  if (entryIds.length === 0) return [];
+  const r = await supabase
+    .from('attachments')
+    .select('*')
+    .eq('entity_type', 'food_log_entry')
+    .in('entity_id', entryIds)
+    .is('deleted_at', null);
+  return throwIf(r.data, r.error);
+}
+
 /** Attachments for a set of meals. */
 export async function getMealAttachments(mealIds: string[]): Promise<Tables<'attachments'>[]> {
   if (mealIds.length === 0) return [];

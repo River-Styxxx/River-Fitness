@@ -14,9 +14,23 @@ export type Shot = 'top' | 'angle' | 'label';
 
 type SlotSpec = { key: Shot; label: string; hint: string; art: string };
 
+/**
+ * Who the shots are of: the whole plate, or one food inside it.
+ *
+ * Same three slots either way — a food added on its own gets photographed the
+ * same way a meal does, because the estimator asks the same question of both.
+ * Only the wording narrows.
+ */
+export type ShotScope = 'meal' | 'item';
+
 /** the two-shot protocol */
-const MEAL_SLOTS: SlotSpec[] = [
-  { key: 'top', label: 'Straight Down', hint: 'directly above the plate', art: topDownGraphic },
+const MEAL_SLOTS: (scope: ShotScope) => SlotSpec[] = (scope) => [
+  {
+    key: 'top',
+    label: 'Straight Down',
+    hint: scope === 'item' ? 'directly above this food' : 'directly above the plate',
+    art: topDownGraphic,
+  },
   { key: 'angle', label: 'About 45°', hint: 'utensil in frame for scale', art: angleGraphic },
 ];
 
@@ -33,12 +47,19 @@ export function PhotoShots({
   onChange,
   weight,
   onWeight,
+  scope = 'meal',
 }: {
   shots: Partial<Record<Shot, PickedPhoto>>;
   onChange: (next: Partial<Record<Shot, PickedPhoto>>) => void;
-  /** grams of food on the plate, if it was weighed */
-  weight: string;
-  onWeight: (v: string) => void;
+  /**
+   * Grams of food on the plate, if it was weighed. Omit both of these and the
+   * weight block disappears — inside the add-a-food sheet the weight is already
+   * one of the fields above, and asking twice would be two answers for one
+   * number.
+   */
+  weight?: string;
+  onWeight?: (v: string) => void;
+  scope?: ShotScope;
 }) {
   const [busy, setBusy] = React.useState<Shot | null>(null);
   const [openWeight, setOpenWeight] = React.useState(false);
@@ -105,36 +126,44 @@ export function PhotoShots({
     );
   }
 
+  const asksWeight = onWeight != null;
+
   return (
     <View>
-      <View style={styles.row}>{MEAL_SLOTS.map((s) => slot(s))}</View>
+      <View style={styles.row}>{MEAL_SLOTS(scope).map((s) => slot(s))}</View>
       <View style={{ height: space.m }} />
       {slot(LABEL_SLOT, true)}
-      <Text style={styles.weightLabel}>Weighed It?</Text>
-      <Pressable
-        onPress={() => setOpenWeight(true)}
-        style={({ pressed }) => [styles.weightRow, pressed && { opacity: 0.85 }]}
-      >
-        <Text style={[styles.weightValue, !weight && styles.weightEmpty]}>
-          {weight ? `${weight} g` : 'Tap To Add'}
-        </Text>
-        <Text style={styles.weightHint}>
-          Everything on the plate, food only — tare the dish first. A real number here
-          anchors the whole estimate.
-        </Text>
-      </Pressable>
+      {asksWeight ? (
+        <>
+          <Text style={styles.weightLabel}>Weighed It?</Text>
+          <Pressable
+            onPress={() => setOpenWeight(true)}
+            style={({ pressed }) => [styles.weightRow, pressed && { opacity: 0.85 }]}
+          >
+            <Text style={[styles.weightValue, !weight && styles.weightEmpty]}>
+              {weight ? `${weight} g` : 'Tap To Add'}
+            </Text>
+            <Text style={styles.weightHint}>
+              Everything on the plate, food only — tare the dish first. A real number here
+              anchors the whole estimate.
+            </Text>
+          </Pressable>
 
-      <EditSheet
-        visible={openWeight}
-        title="Weight Of The Food"
-        hint="Grams, food only, with the plate or bowl tared out. Leave blank if you didn’t weigh it."
-        fields={[{ key: 'weight', label: 'Total Grams', value: weight, numeric: true, placeholder: 'e.g. 420' }]}
-        onCancel={() => setOpenWeight(false)}
-        onSave={(v) => {
-          onWeight(v.weight ?? '');
-          setOpenWeight(false);
-        }}
-      />
+          <EditSheet
+            visible={openWeight}
+            title="Weight Of The Food"
+            hint="Grams, food only, with the plate or bowl tared out. Leave blank if you didn’t weigh it."
+            fields={[
+              { key: 'weight', label: 'Total Grams', value: weight ?? '', numeric: true, placeholder: 'e.g. 420' },
+            ]}
+            onCancel={() => setOpenWeight(false)}
+            onSave={(v) => {
+              onWeight?.(v.weight ?? '');
+              setOpenWeight(false);
+            }}
+          />
+        </>
+      ) : null}
       {err ? <Text style={styles.err}>{err}</Text> : null}
       <Text style={styles.note}>
         Shrunk and stripped of location data before they leave your phone.

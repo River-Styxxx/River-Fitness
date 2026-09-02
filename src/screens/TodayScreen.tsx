@@ -9,6 +9,7 @@ import {
   deleteEntry,
   addFoodToMeal,
   uploadMealPhotos,
+  uploadEntryPhotos,
   DailySummary,
   FoodLogEntry,
   NutritionTarget,
@@ -98,6 +99,12 @@ export function TodayScreen({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [busyMeal, setBusyMeal] = useState<string | null>(null);
   const [addingTo, setAddingTo] = useState<{ mealId: string; at: string } | null>(null);
+  /**
+   * Shots for the one food being added, kept apart from the composer's `shots`.
+   * A photo of the protein bar you forgot is not a photo of the plate, and the
+   * two would otherwise overwrite each other's slots.
+   */
+  const [addShots, setAddShots] = useState<Partial<Record<Shot, PickedPhoto>>>({});
   const [estimating, setEstimating] = useState(false);
   const [estimateNote, setEstimateNote] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -511,11 +518,14 @@ export function TodayScreen({
 
   async function saveAdded(v: Record<string, string>) {
     const target = addingTo;
+    const photoShots = addShots;
     setAddingTo(null);
+    setAddShots({});
     if (!target || !client || !tenantId) return;
     if (!(v.description ?? '').trim()) return;
     try {
       const kcal = numOrNull(v.kcal ?? '');
+      const grams = toGrams(v.weight ?? '', unit);
       const id = await addFoodToMeal({
         mealId: target.mealId,
         at: target.at,
@@ -523,7 +533,7 @@ export function TodayScreen({
         tenantId,
         description: v.description ?? '',
         qty: v.qty ?? null,
-        weightG: toGrams(v.weight ?? '', unit),
+        weightG: grams,
         enteredValue: numOrNull(v.weight ?? ''),
         enteredUnit: (v.weight ?? '').trim() ? unit : null,
         kcal,
@@ -532,20 +542,34 @@ export function TodayScreen({
         fat_g: numOrNull(v.fat ?? ''),
       });
       await load();
-      // no numbers given? the same estimate that runs on a fresh log runs here
+
+      // the row exists already; photos are a follow-up, same as on a fresh meal
+      const photos = (Object.keys(photoShots) as Shot[]).map((kind) => ({
+        kind,
+        blob: photoShots[kind]!.blob,
+      }));
+      if (photos.length > 0) {
+        const out = await uploadEntryPhotos({ clientId: client.id, tenantId, entryId: id, photos });
+        if (out.failed.length > 0) setErr(`Food added. Photo upload failed — ${out.failed[0]}`);
+      }
+
+      // no numbers given? the same estimate that runs on a fresh log runs here,
+      // and now it gets to look at the photos too
       if (kcal == null) {
+        setEstimateNote('Working out the numbers…');
         await autoEstimate(
           [id],
           [
             {
               description: (v.description ?? '').trim(),
               qty: (v.qty ?? '').trim() || undefined,
-              grams: toGrams(v.weight ?? '', unit),
+              grams,
             },
           ],
-          [],
-          null
+          photos,
+          grams
         );
+        setEstimateNote(null);
       }
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'could not add that');
@@ -760,8 +784,13 @@ export function TodayScreen({
         hint="It lands in the same meal, at the same time. Leave the numbers blank and they get worked out."
         fields={addFields()}
         lock={macroLock}
-        onCancel={() => setAddingTo(null)}
+        onCancel={() => {
+          setAddingTo(null);
+          setAddShots({});
+        }}
         onSave={saveAdded}
+        footerTitle="Photos Of This Food"
+        footer={<PhotoShots scope="item" shots={addShots} onChange={setAddShots} />}
       />
 
       <EditSheet
