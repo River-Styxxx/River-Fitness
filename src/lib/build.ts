@@ -30,7 +30,18 @@ import { supabase } from './supabase';
 export const BUILD_ID: string =
   (Constants.expoConfig?.extra as { buildId?: string } | undefined)?.buildId ?? '1970-01-01T00:00:00.000Z';
 
-const CHECK_EVERY_MS = 5 * 60 * 1000;
+/**
+ * Checks ride the backup cadence — every six hours, same as `take_backup()`.
+ *
+ * There is no reason to poll harder than the rate at which builds actually
+ * ship. A five-minute poll was 288 round trips per client per day to catch a
+ * change that happens once or twice a week.
+ */
+const CHECK_EVERY_MS = 6 * 60 * 60 * 1000;
+
+/** a return-to-foreground closer than this to the last check is ignored */
+const FOREGROUND_MIN_GAP_MS = 60 * 60 * 1000;
+let lastCheckedAt = 0;
 
 /* ------------------------------------------------------------------ */
 /* holding a reload while someone is mid-edit                          */
@@ -108,7 +119,10 @@ async function newerBundleDeployed(): Promise<boolean> {
   }
 }
 
-async function check() {
+async function check(reason: 'mount' | 'timer' | 'foreground') {
+  // coming back to the app repeatedly should not mean checking repeatedly
+  if (reason === 'foreground' && Date.now() - lastCheckedAt < FOREGROUND_MIN_GAP_MS) return;
+  lastCheckedAt = Date.now();
   try {
     const [stale, newer] = await Promise.all([isStale(), newerBundleDeployed()]);
     if (!stale && !newer) return;
@@ -127,17 +141,17 @@ async function check() {
  * foreground, and on a slow timer for a session that simply stays open.
  */
 export function watchForForcedUpdate(): () => void {
-  void check();
-  const timer = setInterval(check, CHECK_EVERY_MS);
+  void check('mount');
+  const timer = setInterval(() => void check('timer'), CHECK_EVERY_MS);
 
   const sub = AppState.addEventListener('change', (s) => {
-    if (s === 'active') void check();
+    if (s === 'active') void check('foreground');
   });
 
   let onVisible: (() => void) | null = null;
   if (Platform.OS === 'web' && typeof document !== 'undefined') {
     onVisible = () => {
-      if (document.visibilityState === 'visible') void check();
+      if (document.visibilityState === 'visible') void check('foreground');
     };
     document.addEventListener('visibilitychange', onVisible);
   }
