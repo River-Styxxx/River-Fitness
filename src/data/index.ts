@@ -365,7 +365,39 @@ export async function getLatestDailyAcrossClients(): Promise<DailySummary[]> {
 
 // ---------- meal photos ----------
 
-export type MealPhotoUpload = { kind: 'top' | 'angle' | 'label'; blob: Blob };
+export type MealPhotoUpload = {
+  kind: 'top' | 'angle' | 'label';
+  blob: Blob;
+  /**
+   * The ~240px copy. Written alongside the full-size at `<kind>.thumb.jpg` and
+   * deliberately never a purge candidate — after two weeks the original is gone
+   * and this is what an old review still has to show.
+   */
+  thumb?: Blob;
+};
+
+/**
+ * The full-size photo and its thumbnail, as one upload.
+ *
+ * The thumb is best-effort: failing to write it costs the long-term evidence
+ * view for that one photo, which is not a reason to tell someone their upload
+ * failed when the photo itself is safely stored.
+ */
+async function putPhoto(path: string, photo: MealPhotoUpload): Promise<string | null> {
+  const { error } = await supabase.storage
+    .from('meal-photos')
+    .upload(path, photo.blob, { contentType: 'image/jpeg', upsert: true });
+  if (error) return error.message;
+  if (photo.thumb) {
+    await supabase.storage
+      .from('meal-photos')
+      .upload(path.replace(/\.jpg$/, '.thumb.jpg'), photo.thumb, {
+        contentType: 'image/jpeg',
+        upsert: true,
+      });
+  }
+  return null;
+}
 
 /**
  * Uploads a meal's photos and records them as attachments.
@@ -388,12 +420,9 @@ export async function uploadMealPhotos(input: {
 
   for (const photo of input.photos) {
     const path = `${input.clientId}/${input.mealId}/${photo.kind}.jpg`;
-    const { error: upErr } = await supabase.storage
-      .from('meal-photos')
-      .upload(path, photo.blob, { contentType: 'image/jpeg', upsert: true });
-
+    const upErr = await putPhoto(path, photo);
     if (upErr) {
-      failed.push(`${photo.kind}: ${upErr.message}`);
+      failed.push(`${photo.kind}: ${upErr}`);
       continue;
     }
 
@@ -431,12 +460,9 @@ export async function uploadEntryPhotos(input: {
 
   for (const photo of input.photos) {
     const path = `${input.clientId}/entry/${input.entryId}/${photo.kind}.jpg`;
-    const { error: upErr } = await supabase.storage
-      .from('meal-photos')
-      .upload(path, photo.blob, { contentType: 'image/jpeg', upsert: true });
-
+    const upErr = await putPhoto(path, photo);
     if (upErr) {
-      failed.push(`${photo.kind}: ${upErr.message}`);
+      failed.push(`${photo.kind}: ${upErr}`);
       continue;
     }
 

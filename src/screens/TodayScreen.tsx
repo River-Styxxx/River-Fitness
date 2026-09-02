@@ -331,6 +331,7 @@ export function TodayScreen({
       const photos = (Object.keys(shots) as Shot[]).map((kind) => ({
         kind,
         blob: shots[kind]!.blob,
+        thumb: shots[kind]!.thumb,
       }));
       if (photos.length > 0) {
         const out = await uploadMealPhotos({ clientId: client.id, tenantId, mealId, photos });
@@ -339,7 +340,11 @@ export function TodayScreen({
 
       // photos taken of one food hang off that food's row, not the meal's
       const itemPhotos = composed.map((it) =>
-        (Object.keys(it.shots ?? {}) as Shot[]).map((kind) => ({ kind, blob: it.shots[kind]!.blob }))
+        (Object.keys(it.shots ?? {}) as Shot[]).map((kind) => ({
+          kind,
+          blob: it.shots[kind]!.blob,
+          thumb: it.shots[kind]!.thumb,
+        }))
       );
       for (let i = 0; i < composed.length; i++) {
         if (itemPhotos[i].length === 0) continue;
@@ -596,6 +601,7 @@ export function TodayScreen({
       const photos = (Object.keys(photoShots) as Shot[]).map((kind) => ({
         kind,
         blob: photoShots[kind]!.blob,
+        thumb: photoShots[kind]!.thumb,
       }));
       if (photos.length > 0) {
         const out = await uploadEntryPhotos({ clientId: client.id, tenantId, entryId: id, photos });

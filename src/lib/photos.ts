@@ -17,27 +17,57 @@ export type PickedPhoto = {
   uri: string;
   /** the re-encoded bytes, ready to upload once a bucket exists */
   blob: Blob;
+  /**
+   * A ~240px copy, made here rather than on a server later.
+   *
+   * The full-size photo is deleted after two weeks; this outlives it, so a
+   * review from six months ago still shows something when a note is tapped.
+   * Making it at capture time costs one extra canvas pass and means the purge
+   * job never has to download, decode and re-upload anything — it only deletes.
+   */
+  thumb: Blob;
   width: number;
   height: number;
   bytes: number;
 };
 
-const MAX_EDGE = 1600; // plenty for macro estimation, small enough to upload on cell data
-const QUALITY = 0.82;
+/**
+ * Two profiles, because the two kinds of photo are answering different questions.
+ *
+ * A meal shot is a question for the estimator: how much food is on this plate.
+ * 1024px answers that as well as 1600 did — the plate, the utensil for scale and
+ * the label text all survive — at roughly a third of the bytes. Since every one
+ * of these is deleted inside two weeks anyway, paying for resolution nobody will
+ * ever look at is paying twice.
+ *
+ * A progress photo is the opposite: it IS the data, it is kept for the whole
+ * program, and the compare view is someone looking closely at small changes. So
+ * it keeps its native resolution and only gets re-encoded, which is what strips
+ * the EXIF (GPS included) on the way through.
+ */
+export type PhotoProfile = 'meal' | 'progress';
+
+const PROFILE: Record<PhotoProfile, { maxEdge: number | null; quality: number }> = {
+  meal: { maxEdge: 1024, quality: 0.75 },
+  progress: { maxEdge: null, quality: 0.92 },
+};
+
+const THUMB_EDGE = 240;
+const THUMB_QUALITY = 0.7;
 
 export function photosSupported(): boolean {
   return Platform.OS === 'web';
 }
 
 /** Opens the OS picker (camera on mobile browsers) and returns one processed photo. */
-export async function pickPhoto(): Promise<PickedPhoto | null> {
+export async function pickPhoto(profile: PhotoProfile = 'meal'): Promise<PickedPhoto | null> {
   if (Platform.OS !== 'web') {
     throw new Error('Photo capture on native needs expo-image-picker — not installed yet.');
   }
 
   const file = await chooseFile();
   if (!file) return null;
-  return downscale(file);
+  return downscale(file, profile);
 }
 
 function chooseFile(): Promise<File | null> {
@@ -63,23 +93,33 @@ function chooseFile(): Promise<File | null> {
   });
 }
 
-async function downscale(file: File): Promise<PickedPhoto> {
+/** one canvas pass: draw the bitmap at a target size and hand back JPEG bytes */
+function encode(bitmap: ImageBitmap, edge: number | null, quality: number): Promise<Blob> {
+  const scale = edge == null ? 1 : Math.min(1, edge / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('canvas unavailable');
+  ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  return new Promise((resolve, reject) =>
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('encode failed'))), 'image/jpeg', quality)
+  );
+}
+
+async function downscale(file: File, profile: PhotoProfile = 'meal'): Promise<PickedPhoto> {
+  const { maxEdge, quality } = PROFILE[profile];
   const bitmap = await createImageBitmap(file);
-  const scale = Math.min(1, MAX_EDGE / Math.max(bitmap.width, bitmap.height));
+  // a null cap means native size — re-encoded anyway, which is what drops the EXIF
+  const scale = maxEdge == null ? 1 : Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
   const width = Math.round(bitmap.width * scale);
   const height = Math.round(bitmap.height * scale);
 
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('canvas unavailable');
-  ctx.drawImage(bitmap, 0, 0, width, height);
+  const [blob, thumb] = await Promise.all([
+    encode(bitmap, maxEdge, quality),
+    encode(bitmap, THUMB_EDGE, THUMB_QUALITY),
+  ]);
   bitmap.close();
 
-  const blob: Blob = await new Promise((resolve, reject) =>
-    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('encode failed'))), 'image/jpeg', QUALITY)
-  );
-
-  return { uri: URL.createObjectURL(blob), blob, width, height, bytes: blob.size };
+  return { uri: URL.createObjectURL(blob), blob, thumb, width, height, bytes: blob.size };
 }
