@@ -187,12 +187,18 @@ export function TodayScreen({
         fat: i.fat_g ?? null,
       })),
       totalWeightG: toGrams(totalWeight, unit),
+      // a shot of one food counts the same as a shot of the plate — the
+      // estimator gets the same view either way, so the tier should not
+      // penalise someone for photographing item by item
       photos: {
-        top: shots.top != null,
-        angle: shots.angle != null,
-        label: shots.label != null,
+        top: shots.top != null || items.some((i) => i.shots?.top != null),
+        angle: shots.angle != null || items.some((i) => i.shots?.angle != null),
+        label: shots.label != null || items.some((i) => i.shots?.label != null),
       },
-      context: { ...context, packaged: shots.label != null },
+      context: {
+        ...context,
+        packaged: shots.label != null || items.some((i) => i.shots?.label != null),
+      },
     };
   }
 
@@ -315,6 +321,11 @@ export function TodayScreen({
         tier: pending ? { id: pending.id, pct: pending.pct } : null,
       });
 
+      // logMeal drops blank rows the same way toMealItems does, so index i of
+      // this list is index i of entryIds — that pairing is what lets a food's
+      // own photos find the row they belong to
+      const composed = items.filter((i) => i.description.trim());
+
       // the meal is already committed; photos are a best-effort follow-up so a
       // bad connection costs a photo, not someone's dinner
       const photos = (Object.keys(shots) as Shot[]).map((kind) => ({
@@ -326,14 +337,42 @@ export function TodayScreen({
         if (out.failed.length > 0) setErr(`Meal saved. Photo upload failed — ${out.failed[0]}`);
       }
 
+      // photos taken of one food hang off that food's row, not the meal's
+      const itemPhotos = composed.map((it) =>
+        (Object.keys(it.shots ?? {}) as Shot[]).map((kind) => ({ kind, blob: it.shots[kind]!.blob }))
+      );
+      for (let i = 0; i < composed.length; i++) {
+        if (itemPhotos[i].length === 0) continue;
+        const out = await uploadEntryPhotos({
+          clientId: client.id,
+          tenantId,
+          entryId: entryIds[i],
+          photos: itemPhotos[i],
+        });
+        if (out.failed.length > 0) setErr(`Meal saved. Photo upload failed — ${out.failed[0]}`);
+      }
+
       // snapshot what the estimate needs before the composer is cleared
-      const needsNumbers = mealItems.some((i) => i.kcal == null);
       const described = mealItems.map((i) => ({
         description: i.description,
         qty: i.qty,
         grams: i.weightG ?? null,
       }));
       const weightSnapshot = toGrams(totalWeight, unit);
+
+      /**
+       * A food with its own photos is its own question, so it gets its own
+       * call — that photo is a better view of it than the plate shot is. The
+       * rest go through the meal-level estimate exactly as before, which means
+       * a meal where nobody used per-item photos behaves identically to
+       * yesterday: one request, not one per food.
+       */
+      const ownPhoto: number[] = [];
+      const viaMeal: number[] = [];
+      mealItems.forEach((it, i) => {
+        if (it.kcal != null) return; // already has numbers, nothing to work out
+        (itemPhotos[i].length > 0 ? ownPhoto : viaMeal).push(i);
+      });
 
       setItems([emptyItem(`i${Date.now()}`)]);
       setMealMacros(emptyMacros());
@@ -342,9 +381,19 @@ export function TodayScreen({
       setPending(null);
       await load();
 
-      if (needsNumbers) {
+      if (ownPhoto.length > 0 || viaMeal.length > 0) {
         setEstimateNote('Working out the numbers…');
-        await autoEstimate(entryIds, described, photos, weightSnapshot);
+        for (const i of ownPhoto) {
+          await autoEstimate([entryIds[i]], [described[i]], itemPhotos[i], described[i].grams ?? null);
+        }
+        if (viaMeal.length > 0) {
+          await autoEstimate(
+            viaMeal.map((i) => entryIds[i]),
+            viaMeal.map((i) => described[i]),
+            photos,
+            weightSnapshot
+          );
+        }
         setEstimateNote(null);
       }
     } catch (e) {

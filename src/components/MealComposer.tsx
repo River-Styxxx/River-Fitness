@@ -3,6 +3,8 @@ import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { surface, text, space, font, radius, domainColor } from '../theme';
 import type { MealItemInput } from '../data';
 import { EditSheet, SheetField, SheetLock } from './EditSheet';
+import { PhotoShots, Shot } from './PhotoShots';
+import type { PickedPhoto } from '../lib/photos';
 import {
   WeightUnit,
   WEIGHT_UNITS,
@@ -24,6 +26,12 @@ export type DraftItem = {
   protein: string;
   carbs: string;
   fat: string;
+  /**
+   * Shots of this one food. Separate from the meal's own two-shot set: a photo
+   * of the chicken is a better question to ask about the chicken than a photo
+   * of the whole plate is.
+   */
+  shots: Partial<Record<Shot, PickedPhoto>>;
 };
 
 export type MealMacros = { kcal: string; protein: string; carbs: string; fat: string };
@@ -38,6 +46,7 @@ export const emptyItem = (key: string): DraftItem => ({
   protein: '',
   carbs: '',
   fat: '',
+  shots: {},
 });
 
 export const emptyMacros = (): MealMacros => ({ kcal: '', protein: '', carbs: '', fat: '' });
@@ -155,6 +164,11 @@ export function MealComposer({
 
   const [openItem, setOpenItem] = useState<string | null>(null);
   const [openMeal, setOpenMeal] = useState(false);
+  /**
+   * Photos are held here while the sheet is open rather than written straight
+   * onto the item, so Cancel discards them the same way it discards typing.
+   */
+  const [draftShots, setDraftShots] = useState<Partial<Record<Shot, PickedPhoto>>>({});
 
   const macroSummary = (m: MacroSet) => {
     const e = effective(m);
@@ -216,7 +230,10 @@ export function MealComposer({
       {items.map((item, idx) => (
         <Pressable
           key={item.key}
-          onPress={() => setOpenItem(item.key)}
+          onPress={() => {
+            setDraftShots(item.shots ?? {});
+            setOpenItem(item.key);
+          }}
           style={({ pressed }) => [styles.itemBlock, pressed && { opacity: 0.85 }]}
         >
           <View style={styles.itemRow}>
@@ -241,7 +258,16 @@ export function MealComposer({
               </Pressable>
             ) : null}
           </View>
-          <Text style={styles.itemMacros}>{macroSummary(setOf(item))}</Text>
+          <Text style={styles.itemMacros}>
+            {macroSummary(setOf(item))}
+            {Object.keys(item.shots ?? {}).length > 0 ? (
+              <Text style={styles.itemShots}>
+                {'  ·  '}
+                {Object.keys(item.shots).length} photo
+                {Object.keys(item.shots).length === 1 ? '' : 's'}
+              </Text>
+            ) : null}
+          </Text>
         </Pressable>
       ))}
 
@@ -249,6 +275,7 @@ export function MealComposer({
         onPress={() => {
           const key = `i${Date.now()}`;
           onItems([...items, emptyItem(key)]);
+          setDraftShots({});
           setOpenItem(key);
         }}
         style={({ pressed }) => [styles.addItem, pressed && { opacity: 0.7 }]}
@@ -293,9 +320,12 @@ export function MealComposer({
             protein: v.protein ?? '',
             carbs: v.carbs ?? '',
             fat: v.fat ?? '',
+            shots: draftShots,
           });
           setOpenItem(null);
         }}
+        footerTitle="Photos Of This Food"
+        footer={<PhotoShots scope="item" shots={draftShots} onChange={setDraftShots} />}
       />
 
       <EditSheet
@@ -343,6 +373,7 @@ const styles = StyleSheet.create({
   itemEmpty: { color: text.faint, fontWeight: '400' },
   itemQty: { color: text.muted, fontSize: font.small },
   itemMacros: { color: text.muted, fontSize: font.small, marginTop: space.s },
+  itemShots: { color: domainColor.nutrition, fontSize: font.small, fontWeight: '700' },
   iconBtn: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center' },
   iconGlyph: { color: text.muted, fontSize: font.body },
   addItem: { paddingVertical: space.s },
