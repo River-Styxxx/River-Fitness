@@ -31,6 +31,15 @@ const palette = {
   signalGreen: '#3ddc84',
   signalRed: '#ff5d5d',
   signalYellow: '#f5c518', // triage / attention (amber; distinct from ember)
+  // A fourth meter state, and deliberately NOT a warning colour: "you have not
+  // got there yet", which on a soft floor is simply where the day is at 2pm.
+  // Chosen against the other three by the dataviz validator rather than by eye —
+  // violet300 to success green is dE 15.8 deutan / 30.2 normal, the widest
+  // separation of any pair in the set, and it is never the worst pair in it.
+  // It does collide with coaching blue for a red-green colourblind viewer, which
+  // is accepted: they never encode the same thing and never sit adjacent.
+  violet300: '#d29ef0',
+  violet600: '#8b46c4', // print theme — passes the light-surface lightness band
   // pale blue surface family (light theme)
   sky50: '#e3eefb',
   sky100: '#d2e3f7',
@@ -92,6 +101,8 @@ export const signal = {
   success: palette.signalGreen,
   error: palette.signalRed,
   attention: palette.signalYellow, // triage
+  // not an alarm — the state of a soft floor that has not been reached yet
+  below: palette.violet300,
 };
 
 export const surface = {

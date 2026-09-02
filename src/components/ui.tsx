@@ -217,7 +217,7 @@ export function StatTile({ label, value, unit, domain }: { label: string; value:
  * floor   (protein): under target is the miss. red -> yellow at 90% -> green at goal.
  * ceiling (carbs, fat): over target is the miss. green -> yellow at 90% -> red past goal.
  */
-export type MeterDirection = 'floor' | 'ceiling';
+export type MeterDirection = 'floor' | 'soft_floor' | 'ceiling' | 'target';
 
 export function meterColor(value: number, target: number, direction: MeterDirection): string {
   if (!target) return text.muted;
@@ -226,6 +226,18 @@ export function meterColor(value: number, target: number, direction: MeterDirect
     if (pct >= 1) return signal.success;
     if (pct >= 0.9) return signal.attention;
     return signal.error;
+  }
+  /**
+   * A soft floor has two states and no alarm: violet until it is met, green once
+   * it is. Fat is the case it was built for — there is a real minimum below which
+   * hormone function and fat-soluble vitamin absorption suffer, but being under
+   * it at two in the afternoon is not a failure, it is Tuesday. Red would train
+   * someone to ignore red.
+   */
+  if (direction === 'soft_floor') return pct >= 1 ? signal.success : signal.below;
+  if (direction === 'target') {
+    if (pct > 1.1 || pct < 0.9) return signal.attention;
+    return signal.success;
   }
   if (pct > 1) return signal.error;
   if (pct >= 0.9) return signal.attention;

@@ -15,7 +15,7 @@ import {
   NutritionTarget,
   Client,
 } from '../data';
-import { Screen, Card, H2, Body, Small, StatTile, MacroMeter, Row, Button, Loading } from '../components/ui';
+import { Screen, Card, H2, Body, Small, StatTile, MacroMeter, MeterDirection, Row, Button, Loading } from '../components/ui';
 import { surface, text, space, font, radius, signal, domainColor } from '../theme';
 import { PhotoShots, Shot } from '../components/PhotoShots';
 import type { PickedPhoto } from '../lib/photos';
@@ -694,6 +694,14 @@ export function TodayScreen({
   const cTarget = target?.carbs_g ? Number(target.carbs_g) : null;
   const fTarget = target?.fat_g ? Number(target.fat_g) : null;
 
+  /**
+   * Which way each target is meant to be missed now comes off the row rather
+   * than being decided here. Older rows carry the defaults the columns were
+   * created with, so nothing changes for a client whose targets predate this.
+   */
+  const bound = (v: string | null | undefined, fallback: MeterDirection): MeterDirection =>
+    v === 'floor' || v === 'soft_floor' || v === 'ceiling' || v === 'target' ? v : fallback;
+
   // read-only means this is embedded in the coach's client page, which already
   // provides the scrolling column — a second Screen here would nest two
   // ScrollViews and double the framing
@@ -707,10 +715,14 @@ export function TodayScreen({
 
   return (
     <Shell {...shellProps}>
-      <MacroMeter label="Calories" value={kcalNow} target={kcalTarget} unit="kcal" direction="ceiling" />
-      <MacroMeter label="Protein" value={pNow} target={pTarget} unit="g" direction="floor" />
-      <MacroMeter label="Carbs" value={cNow} target={cTarget} unit="g" direction="ceiling" />
-      <MacroMeter label="Fat" value={fNow} target={fTarget} unit="g" direction="ceiling" />
+      <MacroMeter label="Calories" value={kcalNow} target={kcalTarget} unit="kcal"
+                  direction={bound(target?.kcal_bound, 'ceiling')} />
+      <MacroMeter label="Protein" value={pNow} target={pTarget} unit="g"
+                  direction={bound(target?.protein_bound, 'floor')} />
+      <MacroMeter label="Carbs" value={cNow} target={cTarget} unit="g"
+                  direction={bound(target?.carbs_bound, 'ceiling')} />
+      <MacroMeter label="Fat" value={fNow} target={fTarget} unit="g"
+                  direction={bound(target?.fat_bound, 'ceiling')} />
       <Row style={{ marginTop: space.s }}>
         <StatTile label="P G/100kcal" value={today?.protein_g_per_100kcal ?? '—'} domain="coaching" />
       </Row>
