@@ -256,41 +256,65 @@ export function TodayScreen({
     photos: { kind: Shot; blob: Blob }[],
     weightG: number | null
   ) {
+    // Only write what the model actually returned. Writing null for a macro it
+    // omitted silently blanks a field, and a null kcal demotes the row back to
+    // pending — which is exactly how a filled-in meal loses one line.
+    const filled = (i: { kcal?: number; protein_g?: number; carbs_g?: number; fat_g?: number; fiber_g?: number }) => {
+      const patch: Record<string, number> = {};
+      if (i.kcal != null) patch.kcal = Math.round(i.kcal);
+      if (i.protein_g != null) patch.protein_g = Math.round(i.protein_g);
+      if (i.carbs_g != null) patch.carbs_g = Math.round(i.carbs_g);
+      if (i.fat_g != null) patch.fat_g = Math.round(i.fat_g);
+      if (i.fiber_g != null) patch.fiber_g = Math.round(i.fiber_g);
+      return patch;
+    };
+
+    /**
+     * One row on its own. There is no mapping to get wrong with a single food,
+     * so anything the model comes back with belongs to it — summed if it split
+     * the description into parts.
+     */
+    async function one(
+      entryId: string,
+      item: { description: string; qty?: string; grams?: number | null },
+      shots: { kind: Shot; blob: Blob }[]
+    ): Promise<boolean> {
+      const out = await estimateFromPhotos(shots, {
+        clientId: client?.id ?? null,
+        tenantId,
+        totalWeightG: item.grams ?? null,
+        items: [item],
+      });
+      if (out.status !== 'ok' || out.items.length === 0) return false;
+      const sum = (k: 'kcal' | 'protein_g' | 'carbs_g' | 'fat_g' | 'fiber_g') =>
+        out.items.reduce((a, i) => a + (i[k] ?? 0), 0);
+      if (sum('kcal') <= 0) return false;
+      await updateEntry(entryId, {
+        description: out.items.length === 1 ? out.items[0].description : item.description,
+        kcal: Math.round(sum('kcal')),
+        protein_g: Math.round(sum('protein_g')),
+        carbs_g: Math.round(sum('carbs_g')),
+        fat_g: Math.round(sum('fat_g')),
+        fiber_g: out.items.some((i) => i.fiber_g != null) ? Math.round(sum('fiber_g')) : null,
+      });
+      return true;
+    }
+
     try {
+      if (entryIds.length === 1) {
+        await one(entryIds[0], described[0], photos);
+        await load();
+        return;
+      }
+
       const out = await estimateFromPhotos(photos, {
         clientId: client?.id ?? null,
         tenantId,
         totalWeightG: weightG,
         items: described,
       });
-      if (out.status !== 'ok' || out.items.length === 0) return;
 
-      // Only write what the model actually returned. Writing null for a macro
-      // it omitted silently blanks a field, and a null kcal demotes the row
-      // back to pending — which is exactly how a filled-in meal loses one line.
-      const filled = (i: (typeof out.items)[number]) => {
-        const patch: Record<string, number> = {};
-        if (i.kcal != null) patch.kcal = Math.round(i.kcal);
-        if (i.protein_g != null) patch.protein_g = Math.round(i.protein_g);
-        if (i.carbs_g != null) patch.carbs_g = Math.round(i.carbs_g);
-        if (i.fat_g != null) patch.fat_g = Math.round(i.fat_g);
-        if (i.fiber_g != null) patch.fiber_g = Math.round(i.fiber_g);
-        return patch;
-      };
-
-      if (entryIds.length === 1) {
-        // one row: carry the whole estimate onto it, summed
-        const sum = (k: 'kcal' | 'protein_g' | 'carbs_g' | 'fat_g' | 'fiber_g') =>
-          out.items.reduce((a, i) => a + (i[k] ?? 0), 0);
-        await updateEntry(entryIds[0], {
-          description: out.items.length === 1 ? out.items[0].description : described[0].description,
-          kcal: Math.round(sum('kcal')),
-          protein_g: Math.round(sum('protein_g')),
-          carbs_g: Math.round(sum('carbs_g')),
-          fat_g: Math.round(sum('fat_g')),
-          fiber_g: out.items.some((i) => i.fiber_g != null) ? Math.round(sum('fiber_g')) : null,
-        });
-      } else if (out.items.length === entryIds.length) {
+      if (out.status === 'ok' && out.items.length === entryIds.length) {
         // one at a time, not Promise.all — a single failure should cost one row,
         // not leave the rest of the meal in an unknown state
         for (let i = 0; i < entryIds.length; i++) {
@@ -299,12 +323,27 @@ export function TodayScreen({
             ...filled(out.items[i]),
           });
         }
-      } else {
-        return; // ambiguous — leave it for a person
+        await load();
+        return;
+      }
+
+      /**
+       * The counts disagree, so item[i] is not row[i] and guessing a mapping
+       * would put someone else's calories on a food.
+       *
+       * This used to give up here and leave the WHOLE meal blank — four foods
+       * lost because the model saw an omelette where two rows said eggs and
+       * butter. Falling back to a call per row costs more but has no mapping to
+       * get wrong. Anything that still fails is picked up server-side later, so
+       * a row is never abandoned here.
+       */
+      setEstimateNote('Working them out one at a time…');
+      for (let i = 0; i < entryIds.length; i++) {
+        await one(entryIds[i], described[i], photos);
       }
       await load();
     } catch {
-      // the meal is already saved; a failed estimate costs nothing but the numbers
+      // the meal is already saved, and resolve-pending comes back for the rest
     }
   }
 
